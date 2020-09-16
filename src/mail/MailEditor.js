@@ -523,7 +523,7 @@ export class MailEditor {
 
 	initWithTemplate(recipients: Recipients, subject: string, bodyText: string, confidential: ?boolean, senderMailAddress?: string): Promise<void> {
 		this._blockExternalContent = false
-		
+
 		function toMailAddress({name, address}: {name: ?string, address: string}) {
 			return createMailAddress({name: name || "", address})
 		}
@@ -1121,7 +1121,7 @@ export class MailEditor {
 			let allBubbleLists = [this.toRecipients.bubbles, this.ccRecipients.bubbles, this.bccRecipients.bubbles]
 			allBubbleLists.forEach(bubbles => {
 				bubbles.forEach(bubble => {
-					if (bubble => bubble.entity.contact && bubble.entity.contact._id
+					if (bubble.entity.contact && bubble.entity.contact._id
 						&& isSameId(bubble.entity.contact._id, contactId)) {
 						if (operation === OperationType.UPDATE) {
 							this._updateBubble(bubbles, bubble, contactId)
