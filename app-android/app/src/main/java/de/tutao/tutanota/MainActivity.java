@@ -413,16 +413,16 @@ public class MainActivity extends ComponentActivity {
 				if (text == null && clipData.getItemAt(0).getText() != null) {
 					text = clipData.getItemAt(0).getText().toString();
 				}
-				if (text == null) {
-					text = intent.getStringExtra(Intent.EXTRA_TEXT);
-				}
-				if (text == null) {
-					// TODO Toast.makeText throws an exception
-					// e.g. text/x-vcard
-					Toast.makeText(this, "We don't support this kind of data yet",
-							Toast.LENGTH_SHORT).show();
-					Log.w(TAG, "Could not read text clipData with type " + type);
-				}
+			}
+			if (text == null) {
+				text = intent.getStringExtra(Intent.EXTRA_TEXT);
+			}
+			if (text == null) {
+				// TODO Toast.makeText throws an exception
+				// e.g. text/x-vcard
+				Toast.makeText(this, "We don't support this kind of data yet",
+						Toast.LENGTH_SHORT).show();
+				Log.w(TAG, "Could not read text clipData with type " + type);
 			}
 			files = getFilesFromIntent(intent);
 		} else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
