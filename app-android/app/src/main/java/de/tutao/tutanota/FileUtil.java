@@ -215,7 +215,6 @@ public class FileUtil {
 			response.put("precondition", con.getHeaderField("Precondition")); // see ResourceConstants.PRECONDITION_HEADER
 			response.put("suspensionTime", con.getHeaderField("Retry-After"));
 			if (!response.has("suspensionTime")) {
-
 				response.put("suspensionTime", con.getHeaderField("Suspension-Time"));
 			}
 			return response;
