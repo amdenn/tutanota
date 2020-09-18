@@ -659,6 +659,7 @@ export class SendMailModel {
 		})
 	}
 
+	// TODO Figure out if this will break the CalendarEventViewModel which may or may not expect the recipients not to change
 	_handleEntityEvent(update: EntityUpdateData): void {
 		const {operation, instanceId, instanceListId} = update
 		let contactId: IdTuple = [neverNull(instanceListId), instanceId]
