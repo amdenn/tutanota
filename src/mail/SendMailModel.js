@@ -24,6 +24,7 @@ import {
 	getEnabledMailAddressesWithUser,
 	getMailboxName,
 	getSenderNameForUser,
+	parseMailtoUrl,
 	resolveRecipientInfo,
 	resolveRecipientInfoContact
 } from "./MailUtils"
@@ -51,6 +52,7 @@ import {createApprovalMail} from "../api/entities/monitor/ApprovalMail"
 import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {remove} from "../api/common/utils/ArrayUtils"
 import type {ContactModel} from "../contacts/ContactModel"
+import type {Language} from "../misc/LanguageViewModel"
 import {getAvailableLanguageCode, lang} from "../misc/LanguageViewModel"
 import {RecipientsNotFoundError} from "../api/common/error/RecipientsNotFoundError"
 import {checkApprovalStatus} from "../misc/LoginUtils"
@@ -62,7 +64,7 @@ export type RecipientList = $ReadOnlyArray<Recipient>
 export type Recipients = {to?: RecipientList, cc?: RecipientList, bcc?: RecipientList}
 
 // Because MailAddress does not have contact of the right type (event when renamed on Recipient) MailAddress <: Recipient does not hold
-function toRecipient({address, name}: MailAddress): Recipient {
+export function toRecipient({address, name}: MailAddress): Recipient {
 	return {name, address}
 }
 
@@ -95,6 +97,7 @@ export class SendMailModel {
 	_mailChanged: boolean;
 	_previousMail: ?Mail;
 	_entityEventReceived: EntityEventsListener;
+	_entityEventViewHandler: ?EntityEventsListener; //TODO remove this once MailEditor is fully stateless (BUbbleTextField is rewritten etc)
 	_mailboxDetails: MailboxDetail;
 
 	_objectURLs: Array<string>;
@@ -140,6 +143,7 @@ export class SendMailModel {
 				this._handleEntityEvent(update)
 			}
 		}
+		this._entityEventViewHandler = null
 
 		this._eventController.addEntityListener(this._entityEventReceived)
 
@@ -166,6 +170,11 @@ export class SendMailModel {
 		this._mailChanged = false
 	}
 
+	getNotificationLanguages(): Array<Language> {
+		// TODO
+		return []
+	}
+
 	setSubject(subject: string) {
 		this._subject(subject)
 	}
@@ -182,6 +191,22 @@ export class SendMailModel {
 			recipientInfo.name
 		)
 		return Math.min(100, getPasswordStrength(contact.presharedPassword || "", reserved) / 0.8)
+	}
+
+	getEnabledMailAddresses(): Array<string> {
+		return getEnabledMailAddressesWithUser(this._mailboxDetails, this._logins.getUserController().userGroupInfo)
+	}
+
+	getDefaultSender(): string {
+		return getDefaultSender(this._logins, this._mailboxDetails)
+	}
+
+	hasMailChanged(): boolean {
+		return this._mailChanged
+	}
+
+	setMailChanged(hasChanged: boolean) {
+		this._mailChanged = hasChanged
 	}
 
 	initAsResponse({
@@ -225,8 +250,23 @@ export class SendMailModel {
 	initWithTemplate(recipients: Recipients, subject: string, bodyText: string, confidential: ?boolean, senderMailAddress?: string): Promise<void> {
 		const sender = senderMailAddress ? senderMailAddress : this._senderAddress
 
-		this._setMailData(null, confidential, ConversationType.NEW, null, sender, recipients, [], subject, bodyText, [])
-		return Promise.resolve()
+		return this._setMailData(null, confidential, ConversationType.NEW, null, sender, recipients, [], subject, bodyText, [])
+	}
+
+	initWithMailtoUrl(mailtoUrl: string, confidential: boolean): Promise<void> {
+
+
+		const {to, cc, bcc, subject, body} = parseMailtoUrl(mailtoUrl)
+		const recipients: Recipients = {
+			to: to.map(toRecipient),
+			cc: cc.map(toRecipient),
+			bcc: bcc.map(toRecipient),
+		}
+
+		let signature = getEmailSignature()
+		const bodyText = this._logins.getUserController.isInternalUser() && signature ? body + signature : body
+
+		return this._setMailData(null, confidential, ConversationType.NEW, null, this._senderAddress, recipients, [], subject, bodyText, [])
 	}
 
 	initFromDraft({draftMail, attachments, bodyText, inlineImages, blockExternalContent}: {
@@ -374,6 +414,15 @@ export class SendMailModel {
 		this._mailChanged = true
 	}
 
+	removeAttachment(file: EditorAttachment): void {
+		remove(this._attachments, file)
+		if (file.cid) {
+			const imageElement = this._inlineImageElements.find((e) => e.getAttribute("cid") === file.cid)
+			imageElement && imageElement.remove()
+		}
+		this._mailChanged = true
+	}
+
 	/**
 	 * Saves the draft.
 	 * @param saveAttachments True if also the attachments shall be saved, false otherwise.
@@ -397,13 +446,13 @@ export class SendMailModel {
 		})
 	}
 
-	_getSenderName() {
+	getSenderName() {
 		return getSenderNameForUser(this._mailboxDetails, this._logins.getUserController())
 	}
 
 	_updateDraft(body: string, attachments: ?$ReadOnlyArray<EditorAttachment>, draft: Mail) {
 		return worker
-			.updateMailDraft(this._subject(), body, this._senderAddress, this._getSenderName(), this._toRecipients,
+			.updateMailDraft(this._subject(), body, this._senderAddress, this.getSenderName(), this._toRecipients,
 				this._ccRecipients, this._bccRecipients, attachments, this.isConfidential(), draft)
 			.catch(LockedError, (e) => {
 				console.log("updateDraft: operation is still active", e)
@@ -417,7 +466,7 @@ export class SendMailModel {
 
 	_createDraft(body: string, attachments: ?$ReadOnlyArray<EditorAttachment>, mailMethod: MailMethodEnum): Promise<Mail> {
 		return worker.createMailDraft(this._subject(), body,
-			this._senderAddress, this._getSenderName(), this._toRecipients, this._ccRecipients, this._bccRecipients, this._conversationType,
+			this._senderAddress, this.getSenderName(), this._toRecipients, this._ccRecipients, this._bccRecipients, this._conversationType,
 			this._previousMessageId, attachments, this.isConfidential(), this._replyTos, mailMethod)
 	}
 
@@ -615,11 +664,11 @@ export class SendMailModel {
 			&& (operation === OperationType.UPDATE || operation === OperationType.DELETE)) {
 			let contactId: IdTuple = [neverNull(instanceListId), instanceId]
 
-			this._allRecipients().forEach(recipient => {
+			this._allRecipients().find(recipient => {
 				if (recipient.contact && recipient.contact._id && isSameId(recipient.contact._id, contactId)) {
 					if (operation === OperationType.UPDATE) {
 						// TODO
-						// this._updateBubble(bubbles, bubble, contactId)
+						// this._updateBubble(bubble)
 					} else {
 						// TODO
 						// this._removeBubble(bubble)

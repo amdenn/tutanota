@@ -1,56 +1,29 @@
 // @flow
 import m from "mithril"
 import {Dialog} from "../gui/base/Dialog"
-import {TextField} from "../gui/base/TextField"
 import type {TextFieldAttrs} from "../gui/base/TextFieldN"
 import {TextFieldN, Type} from "../gui/base/TextFieldN"
 import type {Language, TranslationKey} from "../misc/LanguageViewModel"
-import {_getSubstitutedLanguageCode, getAvailableLanguageCode, lang, languages} from "../misc/LanguageViewModel"
+import {lang} from "../misc/LanguageViewModel"
 import {formatStorageSize} from "../misc/Formatter"
 import type {ConversationTypeEnum} from "../api/common/TutanotaConstants"
-import {
-	ALLOWED_IMAGE_FORMATS,
-	ConversationType,
-	FeatureType,
-	Keys,
-	MailMethod,
-	MAX_ATTACHMENT_SIZE,
-	OperationType,
-	ReplyType
-} from "../api/common/TutanotaConstants"
+import {ALLOWED_IMAGE_FORMATS, ConversationType, FeatureType, Keys, MailMethod, OperationType} from "../api/common/TutanotaConstants"
 import {animations, height, opacity} from "../gui/animation/Animations"
-import {load, setup, update} from "../api/main/Entity"
-import {worker} from "../api/main/WorkerClient"
+import {load} from "../api/main/Entity"
 import {Bubble, BubbleTextField} from "../gui/base/BubbleTextField"
 import {Editor} from "../gui/base/Editor"
 import type {RecipientInfo} from "../api/common/RecipientInfo"
 import {isExternal, RecipientInfoType} from "../api/common/RecipientInfo"
-import {
-	AccessBlockedError,
-	ConnectionError,
-	LockedError,
-	NotAuthorizedError,
-	NotFoundError,
-	PreconditionFailedError,
-	TooManyRequestsError
-} from "../api/common/error/RestError"
+import {ConnectionError, PreconditionFailedError, TooManyRequestsError} from "../api/common/error/RestError"
 import {UserError} from "../api/common/error/UserError"
-import {RecipientsNotFoundError} from "../api/common/error/RecipientsNotFoundError"
 import {assertMainOrNode, isApp, Mode} from "../api/Env"
 import {PasswordIndicator} from "../gui/base/PasswordIndicator"
-import {getPasswordStrength} from "../misc/PasswordUtils"
-import {debounce, downcast, neverNull, noOp} from "../api/common/utils/Utils"
+import {debounce, downcast, neverNull} from "../api/common/utils/Utils"
 import {
 	createNewContact,
 	createRecipientInfo,
-	getDefaultSender,
 	getDisplayText,
 	getEmailSignature,
-	getEnabledMailAddresses,
-	getEnabledMailAddressesWithUser,
-	getMailboxName,
-	getSenderName,
-	parseMailtoUrl,
 	replaceCidsWithInlineImages,
 	replaceInlineImagesWithCids,
 	resolveRecipientInfo,
@@ -59,15 +32,11 @@ import {
 import {fileController} from "../file/FileController"
 import {contains, findAllAndRemove, remove, replace} from "../api/common/utils/ArrayUtils"
 import type {File as TutanotaFile} from "../api/entities/tutanota/File"
-import {FileTypeRef} from "../api/entities/tutanota/File"
-import {ConversationEntryTypeRef} from "../api/entities/tutanota/ConversationEntry"
 import type {Mail} from "../api/entities/tutanota/Mail"
-import {MailTypeRef} from "../api/entities/tutanota/Mail"
 import {ContactEditor} from "../contacts/ContactEditor"
 import type {Contact} from "../api/entities/tutanota/Contact"
 import {ContactTypeRef} from "../api/entities/tutanota/Contact"
-import {isSameId, stringToCustomId} from "../api/common/EntityFunctions"
-import {windowFacade} from "../misc/WindowFacade"
+import {isSameId} from "../api/common/EntityFunctions"
 import {fileApp} from "../native/FileApp"
 import {PermissionError} from "../api/common/error/PermissionError"
 import {FileNotFoundError} from "../api/common/error/FileNotFoundError"
@@ -75,23 +44,17 @@ import {logins} from "../api/main/LoginController"
 import {Icons} from "../gui/base/icons/Icons"
 import {DropDownSelector} from "../gui/base/DropDownSelector"
 import type {MailAddress} from "../api/entities/tutanota/MailAddress"
-import {createMailAddress} from "../api/entities/tutanota/MailAddress"
 import {showProgressDialog} from "../gui/base/ProgressDialog"
 import type {MailboxDetail} from "./MailModel"
 import {locator} from "../api/main/MainLocator"
 import {LazyContactListId} from "../contacts/ContactUtils"
-import {RecipientNotResolvedError} from "../api/common/error/RecipientNotResolvedError"
 import stream from "mithril/stream/stream.js"
-import type {EntityEventsListener} from "../api/main/EventController"
 import {isUpdateForTypeRef} from "../api/main/EventController"
 import {htmlSanitizer} from "../misc/HtmlSanitizer"
 import {RichTextToolbar} from "../gui/base/RichTextToolbar"
 import type {ButtonAttrs} from "../gui/base/ButtonN"
 import {ButtonColors, ButtonN, ButtonType} from "../gui/base/ButtonN"
-import type {DialogHeaderBarAttrs} from "../gui/base/DialogHeaderBar"
 import {ExpanderButtonN, ExpanderPanelN} from "../gui/base/ExpanderN"
-import type {DropDownSelectorAttrs} from "../gui/base/DropDownSelectorN"
-import {DropDownSelectorN} from "../gui/base/DropDownSelectorN"
 import {attachDropdown, createDropdown} from "../gui/base/DropdownN"
 import {FileOpenError} from "../api/common/error/FileOpenError"
 import {client} from "../misc/ClientDetector"
@@ -101,11 +64,12 @@ import {CustomerPropertiesTypeRef} from "../api/entities/sys/CustomerProperties"
 import type {InlineImages} from "./MailViewer"
 import {getTimeZone} from "../calendar/CalendarUtils"
 import {MailAddressBubbleHandler} from "../misc/MailAddressBubbleHandler"
-import {createApprovalMail} from "../api/entities/monitor/ApprovalMail"
 import {newMouseEvent} from "../gui/HtmlUtils"
 import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
-import {isMailAddress} from "../misc/FormatValidator"
 import {checkApprovalStatus} from "../misc/LoginUtils"
+import {SendMailModel, toRecipient} from "./SendMailModel"
+import type {DropDownSelectorAttrs} from "../gui/base/DropDownSelectorN"
+import {DropDownSelectorN} from "../gui/base/DropDownSelectorN"
 
 assertMainOrNode()
 
@@ -116,36 +80,26 @@ export type Recipients = {to?: RecipientList, cc?: RecipientList, bcc?: Recipien
 type EditorAttachment = TutanotaFile | DataFile | FileReference
 
 export class MailEditor {
+	_model: SendMailModel
+
 	dialog: Dialog;
-	draft: ?Mail;
 	_senderField: DropDownSelector<string>;
-	_selectedNotificationLanguage: Stream<string>
 	toRecipients: BubbleTextField<RecipientInfo>;
 	ccRecipients: BubbleTextField<RecipientInfo>;
 	bccRecipients: BubbleTextField<RecipientInfo>;
-	_mailAddressToPasswordField: Map<string, TextFieldAttrs>;
-	subject: TextField;
-	conversationType: ConversationTypeEnum;
-	previousMessageId: ?Id; // only needs to be the correct value if this is a new email. if we are editing a draft, conversationType is not used
-	_confidentialButtonState: boolean;
 	_editor: Editor;
-	_tempBody: ?string; // only defined till the editor is initialized
-	view: Function;
 	_domElement: HTMLElement;
 	_domCloseButton: HTMLElement;
-	_attachments: Array<TutanotaFile | DataFile | FileReference>; // contains either Files from Tutanota or DataFiles of locally loaded files. these map 1:1 to the _attachmentButtons
-	_mailChanged: boolean;
 	_showToolbar: boolean;
-	_previousMail: ?Mail;
-	_entityEventReceived: EntityEventsListener;
-	_mailboxDetails: MailboxDetail;
-	_replyTos: RecipientInfo[];
 	_richTextToolbar: RichTextToolbar;
 	_objectURLs: Array<string>;
-	_blockExternalContent: boolean;
 	_mentionedInlineImages: Array<string>
 	/** HTML elements which correspond to inline images. We need them to check that they are removed/remove them later */
 	_inlineImageElements: Array<HTMLElement>
+	_detailsExpanded = stream(false)
+
+	_tempBody: string
+
 
 	/**
 	 * Creates a new draft message. Invoke initAsResponse or initFromDraft if this message should be a response
@@ -153,216 +107,103 @@ export class MailEditor {
 	 *
 	 */
 	constructor(mailboxDetails: MailboxDetail) {
-		this.conversationType = ConversationType.NEW
+		this._model = new SendMailModel(logins, locator.mailModel, locator.contactModel, locator.eventController, mailboxDetails)
+
+		this._tempBody = ""
+
 		this.toRecipients = new BubbleTextField("to_label", new MailAddressBubbleHandler(this))
 		this.ccRecipients = new BubbleTextField("cc_label", new MailAddressBubbleHandler(this))
 		this.bccRecipients = new BubbleTextField("bcc_label", new MailAddressBubbleHandler(this))
-		this._replyTos = []
-		this._mailAddressToPasswordField = new Map()
-		this._attachments = []
-		this._mailChanged = false
-		this._previousMail = null
-		this.draft = null
-		this._mailboxDetails = mailboxDetails
 		this._showToolbar = false
 		this._objectURLs = []
-		this._blockExternalContent = true
 		this._mentionedInlineImages = []
 		this._inlineImageElements = []
 
-		let props = logins.getUserController().props
-
-		this._senderField = new DropDownSelector("sender_label", null, getEnabledMailAddresses(this._mailboxDetails)
-			.sort().map(mailAddress => ({
+		this._senderField = new DropDownSelector("sender_label", null, this._model.getEnabledMailAddresses()
+		                                                                   .sort().map(mailAddress => ({
 				name: mailAddress,
 				value: mailAddress
-			})), stream(getDefaultSender(logins, this._mailboxDetails)), 250)
+			})), stream(this._model.getDefaultSender()), 250)
 
-		let sortedLanguages = languages.slice().sort((a, b) => lang.get(a.textId).localeCompare(lang.get(b.textId)))
-		this._selectedNotificationLanguage = stream(getAvailableLanguageCode(props.notificationMailLanguage || lang.code))
 
-		this._getTemplateLanguages(sortedLanguages)
-		    .then((filteredLanguages) => {
-			    if (filteredLanguages.length > 0) {
-				    const languageCodes = filteredLanguages.map(l => l.code)
-				    this._selectedNotificationLanguage(
-					    _getSubstitutedLanguageCode(props.notificationMailLanguage || lang.code, languageCodes) || languageCodes[0])
-				    sortedLanguages = filteredLanguages
-			    }
-		    })
-
-		this._confidentialButtonState = !props.defaultUnconfidential
-		this.subject = new TextField("subject_label", () => this.getConfidentialStateMessage())
-
-		let confidentialButtonAttrs = {
-			label: "confidential_action",
-			click: (event, attrs) => this._confidentialButtonState = !this._confidentialButtonState,
-			icon: () => this._confidentialButtonState ? Icons.Lock : Icons.Unlock,
-			isSelected: () => this._confidentialButtonState,
-			noBubble: true,
-		}
-
-		let attachFilesButtonAttrs = {
-			label: "attachFiles_action",
-			click: (ev, dom) => this._showFileChooserForAttachments(dom.getBoundingClientRect()),
-			icon: () => Icons.Attachment,
-			noBubble: true
-		}
-
-		const toolbarButton = () => (!logins.getUserController().props.sendPlaintextOnly)
-			? m(ButtonN, {
-				label: 'showRichTextToolbar_action',
-				icon: () => Icons.FontSize,
-				click: () => this._showToolbar = !this._showToolbar,
-				isSelected: () => this._showToolbar,
-				noBubble: true
-			})
-			: null
-
-		this.subject._injectionsRight = () => {
-			return this._allRecipients().find(r => r.type === RecipientInfoType.EXTERNAL)
-				? [m(ButtonN, confidentialButtonAttrs), m(ButtonN, attachFilesButtonAttrs), toolbarButton()]
-				: [m(ButtonN, attachFilesButtonAttrs), toolbarButton()]
-		}
-		this.subject.onUpdate(v => this._mailChanged = true)
-
-		let closeButtonAttrs = attachDropdown({
-			label: "close_alt",
-			click: () => this._close(),
-			type: ButtonType.Secondary,
-			oncreate: vnode => this._domCloseButton = vnode.dom
-		}, () => [
-			{
-				label: "discardChanges_action",
-				click: () => this._close(),
-				type: ButtonType.Dropdown
-			},
-			{
-				label: "saveDraft_action",
-				click: () => this.saveDraft(true, true)
-				                 .then(() => this._close())
-				                 .catch(FileNotFoundError, () => Dialog.error("couldNotAttachFile_msg"))
-				                 .catch(PreconditionFailedError, () => Dialog.error("operationStillActive_msg")),
-				type: ButtonType.Dropdown
-			}
-		], () => this._mailChanged, 250)
-
-		const headerBarAttrs: DialogHeaderBarAttrs = {
-			left: [closeButtonAttrs],
-			right: [{label: "send_action", click: () => this.send(), type: ButtonType.Primary}],
-			middle: () => lang.get(this._conversationTypeToTitleTextId())
-		}
-		let detailsExpanded = stream(false)
 		this._editor = new Editor(200, (html, isPaste) => {
-			const sanitized = htmlSanitizer.sanitizeFragment(html, !isPaste && this._blockExternalContent)
+			const sanitized = htmlSanitizer.sanitizeFragment(html, !isPaste && this._model._blockExternalContent)
 			this._mentionedInlineImages = sanitized.inlineImageCids
 			return sanitized.html
 		})
-		const attachImageHandler = isApp() ?
-			null
-			: (ev) => this._onAttachImageClicked(ev)
+		const attachImageHandler = isApp() ? null : (ev) => this._onAttachImageClicked(ev)
 		this._richTextToolbar = new RichTextToolbar(this._editor, {imageButtonClickHandler: attachImageHandler})
+
 		if (logins.isInternalUserLoggedIn()) {
 			this.toRecipients.textField._injectionsRight = () => m(ExpanderButtonN, {
 				label: "show_action",
-				expanded: detailsExpanded,
+				expanded: this._detailsExpanded,
 			})
 			this._editor.initialized.promise.then(() => {
-				this._mailChanged = false
-				this._editor.addChangeListener(() => this._mailChanged = true)
+				// TODO
+				this._editor.addChangeListener(() => this._model.setMailChanged(true))
 			})
 		} else {
 			this.toRecipients.textField.setDisabled()
 			this._editor.initialized.promise.then(() => {
-				this._mailChanged = false
-				this._editor.addChangeListener(() => this._mailChanged = true)
+				// TODO
+				this._editor.addChangeListener(() => this._model._mailChanged = true)
 			})
 		}
 
-		let windowCloseUnsubscribe = () => {}
-		this.view = () => {
-			return m("#mail-editor.full-height.text.touch-callout", {
-				oncreate: vnode => {
-					this._domElement = vnode.dom
-					windowCloseUnsubscribe = windowFacade.addWindowCloseListener(() =>
-						closeButtonAttrs.click(newMouseEvent(), this._domCloseButton))
-				},
-				onremove: vnode => {
-					windowCloseUnsubscribe()
-					this._objectURLs.forEach((url) => URL.revokeObjectURL(url))
-				},
-				onclick: (e) => {
-					if (e.target === this._domElement) {
-						this._editor.focus()
-					}
-				},
-				ondragover: (ev) => {
-					// do not check the datatransfer here because it is not always filled, e.g. in Safari
-					ev.stopPropagation()
-					ev.preventDefault()
-				},
-				ondrop: (ev) => {
-					if (ev.dataTransfer.files && ev.dataTransfer.files.length > 0) {
-						fileController.readLocalFiles(ev.dataTransfer.files).then(dataFiles => {
-							this.attachFiles((dataFiles: any))
-							m.redraw()
-						}).catch(e => {
-							console.log(e)
-							return Dialog.error("couldNotAttachFile_msg")
-						})
-						ev.stopPropagation()
-						ev.preventDefault()
-					}
-				}
-			}, [
-				m(this.toRecipients),
-				m(ExpanderPanelN, {expanded: detailsExpanded},
-					m(".details", [
-						m(this.ccRecipients),
-						m(this.bccRecipients),
-						m(".wrapping-row", [
-							m(this._senderField),
-							this._languageDropDown(sortedLanguages)
-						]),
-					])
-				),
-				this._confidentialButtonState
-					? m(".external-recipients.overflow-hidden", {
-						oncreate: vnode => this.animate(vnode.dom, true),
-						onbeforeremove: vnode => this.animate(vnode.dom, false)
-					}, this._allRecipients()
-					       .filter(r => r.type === RecipientInfoType.EXTERNAL
-						       && !r.resolveContactPromise) // only show passwords for resolved contacts, otherwise we might not get the password
-					       .map(r => m(TextFieldN, Object.assign({}, this.getPasswordField(r), {
-						       oncreate: vnode => this.animate(vnode.dom, true),
-						       onbeforeremove: vnode => this.animate(vnode.dom, false)
-					       }))))
-					: null,
-				m(".row", m(this.subject)),
-				m(".flex-start.flex-wrap.ml-negative-bubble", this._getAttachmentButtons().map((a) => m(ButtonN, a))),
-				this._attachments.length > 0 ? m("hr.hr") : null,
-				this._showToolbar
-					// Toolbar is not removed from DOM directly, only it's parent (array) is so we have to animate it manually.
-					// m.fragment() gives us a vnode without actual DOM element so that we can run callback on removal
-					? m.fragment({
-						onbeforeremove: ({dom}) => this._richTextToolbar._animate(dom.children[0], false)
-					}, [m(this._richTextToolbar), m("hr.hr")])
-					: null,
-				m(".pt-s.text.scroll-x.break-word-links", {onclick: () => this._editor.focus()}, m(this._editor)),
-				m(".pb")
-			])
-		}
+		// TODO: get rid of this
+		this._model._entityEventViewHandler = this._handleEntityEvent
 
-		this._entityEventReceived = (updates) => {
-			for (let update of updates) {
-				this._handleEntityEvent(update)
-			}
-		}
-
-		this.dialog = Dialog.largeDialog(headerBarAttrs, this)
+		this.dialog = Dialog.largeDialog({
+			left: [
+				(attachDropdown({
+					label: "close_alt",
+					click: () => this._close(),
+					type: ButtonType.Secondary,
+					oncreate: vnode => this._domCloseButton = vnode.dom
+				}, () => [
+					{
+						label: "discardChanges_action",
+						click: () => this._close(),
+						type: ButtonType.Dropdown
+					},
+					{
+						label: "saveDraft_action",
+						click: () => this.saveDraft(true, true)
+						                 .then(() => this._close())
+						                 .catch(FileNotFoundError, () => Dialog.error("couldNotAttachFile_msg"))
+						                 .catch(PreconditionFailedError, () => Dialog.error("operationStillActive_msg")),
+						type: ButtonType.Dropdown
+					}
+				], () => this._model.hasMailChanged(), 250))
+			],
+			right: [{label: "send_action", click: () => this.send(), type: ButtonType.Primary}],
+			middle: () => lang.get(this._conversationTypeToTitleTextId())
+		}, this)
 		                    .addShortcut({
 			                    key: Keys.ESC,
-			                    exec: () => {closeButtonAttrs.click(newMouseEvent(), this._domCloseButton)},
+			                    exec: () => {
+				                    attachDropdown({
+					                    label: "close_alt",
+					                    click: () => this._close(),
+					                    type: ButtonType.Secondary,
+					                    oncreate: vnode => this._domCloseButton = vnode.dom
+				                    }, () => [
+					                    {
+						                    label: "discardChanges_action",
+						                    click: () => this._close(),
+						                    type: ButtonType.Dropdown
+					                    },
+					                    {
+						                    label: "saveDraft_action",
+						                    click: () => this.saveDraft(true, true)
+						                                     .then(() => this._close())
+						                                     .catch(FileNotFoundError, () => Dialog.error("couldNotAttachFile_msg"))
+						                                     .catch(PreconditionFailedError, () => Dialog.error("operationStillActive_msg")),
+						                    type: ButtonType.Dropdown
+					                    }
+				                    ], () => this._model.hasMailChanged(), 250).click(newMouseEvent(), this._domCloseButton)
+			                    },
 			                    help: "close_alt"
 		                    })
 		                    .addShortcut({
@@ -407,9 +248,167 @@ export class MailEditor {
 				                    this.send()
 			                    },
 			                    help: "send_action"
-		                    }).setCloseHandler(() => closeButtonAttrs.click(newMouseEvent(), this._domCloseButton))
-		this._mailChanged = false
+		                    }).setCloseHandler(() => attachDropdown({
+				label: "close_alt",
+				click: () => this._close(),
+				type: ButtonType.Secondary,
+				oncreate: vnode => this._domCloseButton = vnode.dom
+			}, () => [
+				{
+					label: "discardChanges_action",
+					click: () => this._close(),
+					type: ButtonType.Dropdown
+				},
+				{
+					label: "saveDraft_action",
+					click: () => this.saveDraft(true, true)
+					                 .then(() => this._close())
+					                 .catch(FileNotFoundError, () => Dialog.error("couldNotAttachFile_msg"))
+					                 .catch(PreconditionFailedError, () => Dialog.error("operationStillActive_msg")),
+					type: ButtonType.Dropdown
+				}
+			], () => this._model.hasMailChanged(), 250).click(newMouseEvent(), this._domCloseButton))
 	}
+
+	view = () => {
+		return m("#mail-editor.full-height.text.touch-callout", {
+			oncreate: vnode => {
+				this._domElement = vnode.dom
+				// TODO
+				// windowCloseUnsubscribe = windowFacade.addWindowCloseListener(() =>
+				// 	attachDropdown({
+				// 		label: "close_alt",
+				// 		click: () => this._close(),
+				// 		type: ButtonType.Secondary,
+				// 		oncreate: vnode => this._domCloseButton = vnode.dom
+				// 	}, () => [
+				// 		{
+				// 			label: "discardChanges_action",
+				// 			click: () => this._close(),
+				// 			type: ButtonType.Dropdown
+				// 		},
+				// 		{
+				// 			label: "saveDraft_action",
+				// 			click: () => this.saveDraft(true, true)
+				// 			                 .then(() => this._close())
+				// 			                 .catch(FileNotFoundError, () => Dialog.error("couldNotAttachFile_msg"))
+				// 			                 .catch(PreconditionFailedError, () => Dialog.error("operationStillActive_msg")),
+				// 			type: ButtonType.Dropdown
+				// 		}
+				// 	], () => this._model.hasMailChanged(), 250).click(newMouseEvent(), this._domCloseButton))
+			},
+			onremove: vnode => {
+				// windowCloseUnsubscribe()
+				this._objectURLs.forEach((url) => URL.revokeObjectURL(url))
+			},
+			onclick: (e) => {
+				if (e.target === this._domElement) {
+					this._editor.focus()
+				}
+			},
+			ondragover: (ev) => {
+				// do not check the datatransfer here because it is not always filled, e.g. in Safari
+				ev.stopPropagation()
+				ev.preventDefault()
+			},
+			ondrop: (ev) => {
+				if (ev.dataTransfer.files && ev.dataTransfer.files.length > 0) {
+					fileController.readLocalFiles(ev.dataTransfer.files).then(dataFiles => {
+						this.attachFiles((dataFiles: any))
+						m.redraw()
+					}).catch(e => {
+						console.log(e)
+						return Dialog.error("couldNotAttachFile_msg")
+					})
+					ev.stopPropagation()
+					ev.preventDefault()
+				}
+			}
+		}, [
+			m(this.toRecipients),
+			m(ExpanderPanelN, {expanded: this._detailsExpanded},
+				m(".details", [
+					m(this.ccRecipients),
+					m(this.bccRecipients),
+					m(".wrapping-row", [
+						m(this._senderField),
+						// TODO
+						// this._model.getNotificationLanguages()
+					]),
+				])
+			),
+			this._model.isConfidential()
+				? m(".external-recipients.overflow-hidden", {
+					oncreate: vnode => this.animate(vnode.dom, true),
+					onbeforeremove: vnode => this.animate(vnode.dom, false)
+				}, this._model._allRecipients()
+				       .filter(r => r.type === RecipientInfoType.EXTERNAL
+					       && !r.resolveContactPromise) // only show passwords for resolved contacts, otherwise we might not get the password
+				       .map(r => m(TextFieldN, Object.assign({}, this.getPasswordField(r), {
+					       oncreate: vnode => this.animate(vnode.dom, true),
+					       onbeforeremove: vnode => this.animate(vnode.dom, false)
+				       }))))
+				: null,
+			m(".row", m(TextFieldN, {
+				label: "subject_label",
+				helpLabel: () => this.getConfidentialStateMessage(),
+				value: this._model._subject,
+				injectionsRight: () => {
+					return this._model._allRecipients().find(r => r.type === RecipientInfoType.EXTERNAL)
+						? [
+							m(ButtonN, {
+								label: "confidential_action",
+								click: () => this._model.setConfidential(!this._model.isConfidential()),
+								icon: () => this._model.isConfidential() ? Icons.Lock : Icons.Unlock,
+								isSelected: () => this._model.isConfidential(),
+								noBubble: true,
+							}), m(ButtonN, {
+								label: "attachFiles_action",
+								click: (ev, dom) => this._showFileChooserForAttachments(dom.getBoundingClientRect()),
+								icon: () => Icons.Attachment,
+								noBubble: true
+							}), ((!logins.getUserController().props.sendPlaintextOnly)
+								? m(ButtonN, {
+									label: 'showRichTextToolbar_action',
+									icon: () => Icons.FontSize,
+									click: () => this._showToolbar = !this._showToolbar,
+									isSelected: () => this._showToolbar,
+									noBubble: true
+								})
+								: null)
+						]
+						: [
+							m(ButtonN, {
+								label: "attachFiles_action",
+								click: (ev, dom) => this._showFileChooserForAttachments(dom.getBoundingClientRect()),
+								icon: () => Icons.Attachment,
+								noBubble: true
+							}), ((!logins.getUserController().props.sendPlaintextOnly)
+								? m(ButtonN, {
+									label: 'showRichTextToolbar_action',
+									icon: () => Icons.FontSize,
+									click: () => this._showToolbar = !this._showToolbar,
+									isSelected: () => this._showToolbar,
+									noBubble: true
+								})
+								: null)
+						]
+				}
+			})),
+			m(".flex-start.flex-wrap.ml-negative-bubble", this._getAttachmentButtons().map((a) => m(ButtonN, a))),
+			this._model._attachments.length > 0 ? m("hr.hr") : null,
+			this._showToolbar
+				// Toolbar is not removed from DOM directly, only it's parent (array) is so we have to animate it manually.
+				// m.fragment() gives us a vnode without actual DOM element so that we can run callback on removal
+				? m.fragment({
+					onbeforeremove: ({dom}) => this._richTextToolbar._animate(dom.children[0], false)
+				}, [m(this._richTextToolbar), m("hr.hr")])
+				: null,
+			m(".pt-s.text.scroll-x.break-word-links", {onclick: () => this._editor.focus()}, m(this._editor)),
+			m(".pb")
+		])
+	}
+
 
 	_getTemplateLanguages(sortedLanguages: Array<Language>): Promise<Array<Language>> {
 		return logins.getUserController().loadCustomer()
@@ -428,7 +427,7 @@ export class MailEditor {
 	}
 
 	_conversationTypeToTitleTextId(): TranslationKey {
-		switch (this.conversationType) {
+		switch (this._model._conversationType) {
 			case ConversationType.NEW:
 				return "newMail_action"
 			case ConversationType.REPLY:
@@ -449,29 +448,17 @@ export class MailEditor {
 	}
 
 	getPasswordField(recipientInfo: RecipientInfo): TextFieldAttrs {
-		if (!this._mailAddressToPasswordField.has(recipientInfo.mailAddress)) {
-			let passwordIndicator = new PasswordIndicator(() => this.getPasswordStrength(recipientInfo))
-			let textFieldAttrs = {
-				label: () => lang.get("passwordFor_label", {"{1}": recipientInfo.mailAddress}),
-				helpLabel: () => m(passwordIndicator),
-				value: stream(""),
-				type: Type.ExternalPassword
-			}
-			if (recipientInfo.contact && recipientInfo.contact.presharedPassword) {
-				textFieldAttrs.value(recipientInfo.contact.presharedPassword)
-			}
-			this._mailAddressToPasswordField.set(recipientInfo.mailAddress, textFieldAttrs)
+		let passwordIndicator = new PasswordIndicator(() => this._model.getPasswordStrength(recipientInfo))
+		let textFieldAttrs = {
+			label: () => lang.get("passwordFor_label", {"{1}": recipientInfo.mailAddress}),
+			helpLabel: () => m(passwordIndicator),
+			value: stream(""),
+			type: Type.ExternalPassword
 		}
-		return neverNull(this._mailAddressToPasswordField.get(recipientInfo.mailAddress))
-	}
-
-	getPasswordStrength(recipientInfo: RecipientInfo) {
-		let reserved = getEnabledMailAddressesWithUser(this._mailboxDetails, logins.getUserController().userGroupInfo).concat(
-			getMailboxName(logins, this._mailboxDetails),
-			recipientInfo.mailAddress,
-			recipientInfo.name
-		)
-		return Math.min(100, (getPasswordStrength(this.getPasswordField(recipientInfo).value(), reserved) / 0.8 * 1))
+		if (recipientInfo.contact && recipientInfo.contact.presharedPassword) {
+			textFieldAttrs.value(recipientInfo.contact.presharedPassword)
+		}
+		return textFieldAttrs
 	}
 
 	initAsResponse({
@@ -495,7 +482,6 @@ export class MailEditor {
 		inlineImages?: ?Promise<InlineImages>,
 		blockExternalContent: boolean
 	}): Promise<void> {
-		this._blockExternalContent = blockExternalContent
 		if (addSignature) {
 			bodyText = "<br/><br/><br/>" + bodyText
 			let signature = getEmailSignature()
@@ -507,51 +493,41 @@ export class MailEditor {
 			this.dialog.setFocusOnLoadFunction(() => this._focusBodyOnLoad())
 		}
 		let previousMessageId: ?string = null
-		return load(ConversationEntryTypeRef, previousMail.conversationEntry)
-			.then(ce => {
-				previousMessageId = ce.messageId
-			})
-			.catch(NotFoundError, e => {
-				console.log("could not load conversation entry", e);
-			})
-			.then(() => {
-				// We don't want to wait for the editor to be initialized, otherwise it will never be shown
-				this._setMailData(previousMail, previousMail.confidential, conversationType, previousMessageId, senderMailAddress, toRecipients, ccRecipients, bccRecipients, attachments, subject, bodyText, replyTos)
-				    .then(() => this._replaceInlineImages(inlineImages))
-			})
+		const recipients = {
+			to: toRecipients.map(toRecipient),
+			cc: ccRecipients.map(toRecipient),
+			bcc: bccRecipients.map(toRecipient),
+		}
+		return this._model.initAsResponse({
+			previousMail,
+			conversationType,
+			senderMailAddress,
+			recipients,
+			attachments,
+			subject, bodyText,
+			replyTos, addSignature, inlineImages,
+			blockExternalContent
+		})
 	}
 
 	initWithTemplate(recipients: Recipients, subject: string, bodyText: string, confidential: ?boolean, senderMailAddress?: string): Promise<void> {
-		this._blockExternalContent = false
-		
-		function toMailAddress({name, address}: {name: ?string, address: string}) {
-			return createMailAddress({name: name || "", address})
-		}
 
-		const toRecipients = recipients.to ? recipients.to.map(toMailAddress) : []
-		const ccRecipients = recipients.cc ? recipients.cc.map(toMailAddress) : []
-		const bccRecipients = recipients.bcc ? recipients.bcc.map(toMailAddress) : []
-		if (toRecipients.length) {
-			this.dialog.setFocusOnLoadFunction(() => this._focusBodyOnLoad())
-		}
 
-		const sender = senderMailAddress ? senderMailAddress : this._senderField.selectedValue()
+		// TODO: set focus maybe as .then of initWithTemplate?
+		// function toMailAddress({name, address}: {name: ?string, address: string}) {
+		// 	return createMailAddress({name: name || "", address})
+		// }
+		//
+		// const toRecipients = recipients.to ? recipients.to.map(toMailAddress) : []
+		// if (toRecipients.length) {
+		// 	this.dialog.setFocusOnLoadFunction(() => this._focusBodyOnLoad())
+		// }
+		return this._model.initWithTemplate(recipients, subject, bodyText, confidential, senderMailAddress)
 
-		this._setMailData(null, confidential, ConversationType.NEW, null, sender, toRecipients, ccRecipients,
-			bccRecipients, [], subject, bodyText, [])
-		return Promise.resolve()
 	}
 
 	initWithMailtoUrl(mailtoUrl: string, confidential: boolean): Promise<void> {
-		let result = parseMailtoUrl(mailtoUrl)
-
-		let bodyText = result.body
-		let signature = getEmailSignature()
-		if (logins.getUserController().isInternalUser() && signature) {
-			bodyText = bodyText + signature
-		}
-		this._setMailData(null, confidential, ConversationType.NEW, null, this._senderField.selectedValue(), result.to, result.cc, result.bcc, [], result.subject, bodyText, [])
-		return Promise.resolve()
+		return this._model.initWithMailtoUrl(mailtoUrl, confidential)
 	}
 
 	initFromDraft({draftMail, attachments, bodyText, inlineImages, blockExternalContent}: {
@@ -561,80 +537,21 @@ export class MailEditor {
 		blockExternalContent: boolean,
 		inlineImages?: Promise<InlineImages>
 	}): Promise<void> {
-		let conversationType: ConversationTypeEnum = ConversationType.NEW
-		let previousMessageId: ?string = null
-		let previousMail: ?Mail = null
-		this.draft = draftMail
-		this._blockExternalContent = blockExternalContent
-
-		return load(ConversationEntryTypeRef, draftMail.conversationEntry).then(ce => {
-			conversationType = downcast(ce.conversationType)
-			if (ce.previous) {
-				return load(ConversationEntryTypeRef, ce.previous).then(previousCe => {
-					previousMessageId = previousCe.messageId
-					if (previousCe.mail) {
-						return load(MailTypeRef, previousCe.mail).then(mail => {
-							previousMail = mail
-						})
-					}
-				}).catch(NotFoundError, e => {
-					// ignore
-				})
-			}
-		}).then(() => {
-			const {confidential, sender, toRecipients, ccRecipients, bccRecipients, subject, replyTos} = draftMail
-			// We don't want to wait for the editor to be initialized, otherwise it will never be shown
-			this._setMailData(previousMail, confidential, conversationType, previousMessageId, sender.address, toRecipients, ccRecipients, bccRecipients, attachments, subject, bodyText, replyTos)
-			    .then(() => this._replaceInlineImages(inlineImages))
-		})
+		// We don't want to wait for the editor to be initialized, otherwise it will never be shown
+		this._model.initFromDraft({draftMail, attachments, bodyText, inlineImages, blockExternalContent})
+		// TODO: check this stuff
+		// this._model.initFromDraft(previousMail, confidential, conversationType, previousMessageId, sender.address, toRecipients, ccRecipients, bccRecipients, attachments, subject, bodyText, replyTos)
+		//     .then(() => this._replaceInlineImages(inlineImages))
+		return Promise.resolve()
 	}
 
-	_setMailData(previousMail: ?Mail, confidential: ?boolean, conversationType: ConversationTypeEnum, previousMessageId: ?string, senderMailAddress: string,
-	             toRecipients: MailAddress[], ccRecipients: MailAddress[], bccRecipients: MailAddress[], attachments: TutanotaFile[], subject: string,
-	             body: string, replyTos: EncryptedMailAddress[]): Promise<void> {
-		this._previousMail = previousMail
-		this.conversationType = conversationType
-		this.previousMessageId = previousMessageId
-		if (confidential != null) {
-			this._confidentialButtonState = confidential
-		}
-		this._senderField.selectedValue(senderMailAddress)
-		this.subject.setValue(subject)
-		this._attachments = []
-		this._tempBody = body
-
-		this.attachFiles(((attachments: any): Array<TutanotaFile | DataFile | FileReference>))
-
-		// call this async because the editor is not initialized before this mail editor dialog is shown
-		const promise = this._editor.initialized.promise.then(() => {
-			if (this._editor.getHTML() !== body) {
-				this._editor.setHTML(this._tempBody)
-				this._mailChanged = false
-				// Add mutation observer to remove attachments when corresponding DOM element is removed
-				this._observeEditorMutations()
-			}
-			this._tempBody = null
-		})
-
-		if (previousMail && previousMail.restrictions && previousMail.restrictions.participantGroupInfos.length > 0) {
-			this.toRecipients.textField._injectionsRight = null
-			this.toRecipients.textField.setDisabled()
-		}
-
-		this.toRecipients.bubbles = toRecipients.filter(r => isMailAddress(r.address, false)).map(r => this.createBubble(r.name, r.address, null))
-		this.ccRecipients.bubbles = ccRecipients.filter(r => isMailAddress(r.address, false)).map(r => this.createBubble(r.name, r.address, null))
-		this.bccRecipients.bubbles = bccRecipients.filter(r => isMailAddress(r.address, false)).map(r => this.createBubble(r.name, r.address, null))
-		this._replyTos = replyTos.map(ema => createRecipientInfo(ema.address, ema.name, null))
-		this._mailChanged = false
-		return promise
-	}
-
+	// TODO: call somewhere
 	_replaceInlineImages(inlineImages: ?Promise<InlineImages>): void {
 		if (inlineImages) {
 			inlineImages.then((loadedInlineImages) => {
 				Object.keys(loadedInlineImages).forEach((key) => {
 					const {file} = loadedInlineImages[key]
-					if (!this._attachments.includes(file)) this._attachments.push(file)
+					if (!this._model._attachments.includes(file)) this._model._attachments.push(file)
 					m.redraw()
 				})
 				this._editor.initialized.promise.then(() => {
@@ -656,13 +573,15 @@ export class MailEditor {
 	}
 
 	show() {
-		locator.eventController.addEntityListener(this._entityEventReceived)
+		// TODO
+		// this is done in the ctor of model
+		// this._model._eventController.addEntityListener(this._entityEventReceived)
 		this.dialog.show()
 	}
 
 
 	_close() {
-		locator.eventController.removeEntityListener(this._entityEventReceived)
+		this._model.dispose() // removes model as entity event listener
 		this.dialog.close()
 	}
 
@@ -690,30 +609,14 @@ export class MailEditor {
 		}
 	}
 
-	attachFiles(files: Array<TutanotaFile | DataFile | FileReference>) {
-		let totalSize = 0
-		this._attachments.forEach(file => {
-			totalSize += Number(file.size)
-		})
-		let tooBigFiles = [];
-		files.forEach(file => {
-			if (totalSize + Number(file.size) > MAX_ATTACHMENT_SIZE) {
-				tooBigFiles.push(file.name)
-			} else {
-				totalSize += Number(file.size)
-				this._attachments.push(file)
-			}
-		})
-		if (tooBigFiles.length > 0) {
-			Dialog.error(() => lang.get("tooBigAttachment_msg") + tooBigFiles.join(", "));
-		}
-		this._mailChanged = true
+	attachFiles(files: Array<TutanotaFile | DataFile | FileReference>): void {
+		this._model.attachFiles(files)
 		m.redraw()
 	}
 
 	_getAttachmentButtons(): Array<ButtonAttrs> {
 		return this
-			._attachments
+			._model._attachments
 			// Only show file buttons which do not correspond to inline images in HTML
 			.filter((item) => this._mentionedInlineImages.includes(item.cid) === false)
 			.map(file => {
@@ -745,12 +648,7 @@ export class MailEditor {
 					label: "remove_action",
 					type: ButtonType.Secondary,
 					click: () => {
-						remove(this._attachments, file)
-						if (file.cid) {
-							const imageElement = this._inlineImageElements.find((e) => e.getAttribute("cid") === file.cid)
-							imageElement && imageElement.remove()
-						}
-						this._mailChanged = true
+						this._model.removeAttachment(file)
 						m.redraw()
 					}
 				})
@@ -765,6 +663,7 @@ export class MailEditor {
 			})
 	}
 
+	// TODO is this purely UI related? idk
 	_onAttachImageClicked(ev: Event) {
 		this._showFileChooserForAttachments((ev.target: any).getBoundingClientRect(), ALLOWED_IMAGE_FORMATS)
 		    .then((files) => {
@@ -789,42 +688,8 @@ export class MailEditor {
 	 * @throws PreconditionFailedError when the draft is locked
 	 */
 	saveDraft(saveAttachments: boolean, showProgress: boolean): Promise<void> {
-		let attachments = (saveAttachments) ? this._attachments : null
-		let senderName = getSenderName(this._mailboxDetails)
-		let to = this.toRecipients.bubbles.map(bubble => bubble.entity)
-		let cc = this.ccRecipients.bubbles.map(bubble => bubble.entity)
-		let bcc = this.bccRecipients.bubbles.map(bubble => bubble.entity)
-
-		// _tempBody is til the editor is initialized. It might not be the case when
-		// assigning a mail to another user because editor is not shown and we cannot
-		// wait for the editor to be initialized.
-		const body = this._tempBody == null ? replaceInlineImagesWithCids(this._editor.getDOM()).innerHTML : this._tempBody
-		let promise = null
-		const createMailDraft = () => worker.createMailDraft(this.subject.value(), body,
-			this._senderField.selectedValue(), senderName, to, cc, bcc, this.conversationType, this.previousMessageId,
-			attachments, this._isConfidential(), this._replyTos, MailMethod.NONE)
-		const draft = this.draft
-		if (draft != null) {
-			promise = worker.updateMailDraft(this.subject.value(), body, this._senderField.selectedValue(),
-				senderName, to, cc, bcc, attachments, this._isConfidential(), draft)
-			                .catch(LockedError, e => Dialog.error("operationStillActive_msg"))
-			                .catch(NotFoundError, e => {
-				                console.log("draft has been deleted, creating new one")
-				                return createMailDraft()
-			                })
-		} else {
-			promise = createMailDraft()
-		}
-
-		promise = promise.then(draft => {
-			this.draft = draft
-			return Promise.map(draft.attachments, fileId => load(FileTypeRef, fileId)).then(attachments => {
-				this._attachments = [] // attachFiles will push to existing files but we want to overwrite them
-				this.attachFiles(attachments)
-				this._mailChanged = false
-			})
-		})
-
+		const body = this._getBody()
+		const promise = this._model.saveDraft(body, saveAttachments, MailMethod.NONE)
 		if (showProgress) {
 			return showProgressDialog("save_msg", promise)
 		} else {
@@ -832,20 +697,16 @@ export class MailEditor {
 		}
 	}
 
-	_isConfidential() {
-		return this._confidentialButtonState || !this._containsExternalRecipients()
+	_getBody() {
+		return this._tempBody == null ? replaceInlineImagesWithCids(this._editor.getDOM()).innerHTML : this._tempBody
 	}
 
 	getConfidentialStateMessage() {
-		if (this._isConfidential()) {
+		if (this._model.isConfidential()) {
 			return lang.get('confidentialStatus_msg')
 		} else {
 			return lang.get('nonConfidentialStatus_msg')
 		}
-	}
-
-	_containsExternalRecipients() {
-		return (this._allRecipients().find(r => isExternal(r)) != null)
 	}
 
 	send(showProgress: boolean = true, tooManyRequestsError: TranslationKey = "tooManyMails_msg") {
@@ -856,96 +717,39 @@ export class MailEditor {
 				this.ccRecipients.createBubbles()
 				this.bccRecipients.createBubbles()
 
+				// TODO: See if some of this stuff can't be moved to the model
+				// If the text in the textfield hasn't been consumed into bubles it means there was invalid text
 				if (this.toRecipients.textField.value().trim() !== "" ||
 					this.ccRecipients.textField.value().trim() !== "" ||
 					this.bccRecipients.textField.value().trim() !== "") {
 					throw new UserError("invalidRecipients_msg")
-				} else if (this.toRecipients.bubbles.length === 0 &&
-					this.ccRecipients.bubbles.length === 0 &&
-					this.bccRecipients.bubbles.length === 0) {
-					throw new UserError("noRecipients_msg")
 				}
 
 				let subjectConfirmPromise = Promise.resolve(true)
 
-				if (this.subject.value().trim().length === 0) {
+				if (this._model._subject().trim().length === 0) {
 					subjectConfirmPromise = Dialog.confirm("noSubject_msg")
 				}
 				return subjectConfirmPromise
 			})
 			.then(confirmed => {
 				if (confirmed) {
-					let isApprovalMail = false
-					let send = this
-						._waitForResolvedRecipients() // Resolve all added recipients before trying to send it
-						.then((recipients) => {
-							if (recipients.length === 1 && recipients[0].mailAddress.toLowerCase().trim() === "approval@tutao.de") {
-								isApprovalMail = true
-								return recipients
-							} else {
-								return this.saveDraft(true, false)
-								           .return(recipients)
-							}
-						})
-						.then(resolvedRecipients => {
-							if (isApprovalMail) {
-								let m = createApprovalMail()
-								m._id = ["---------c--", stringToCustomId(this._senderField.selectedValue())]
-								m._ownerGroup = logins.getUserController().user.userGroup.group
-								m.text = "Subject: " + this.subject.value() + "<br>" + this._editor.getDOM().innerHTML
-								return setup(m._id[0], m)
-									.catch(NotAuthorizedError, e => console.log("not authorized for approval message"))
-									.then(() => this._close())
-							} else {
-								let externalRecipients = resolvedRecipients.filter(r => isExternal(r))
-								if (this._confidentialButtonState && externalRecipients.length > 0
-									&& externalRecipients.find(r => this.getPasswordField(r).value().trim() !== "") == null) {
-									throw new UserError("noPreSharedPassword_msg")
-								}
-
-								let sendMail = Promise.resolve(true)
-								if (this._confidentialButtonState
-									&& externalRecipients.reduce((min, current) =>
-										Math.min(min, this.getPasswordStrength(current)), 100) < 80) {
-									sendMail = Dialog.confirm("presharedPasswordNotStrongEnough_msg")
-								}
-
-								return sendMail.then(ok => {
-									if (ok) {
-										return this._updateContacts(resolvedRecipients)
-										           .then(() => worker.sendMailDraft(
-											           neverNull(this.draft),
-											           resolvedRecipients,
-											           this._selectedNotificationLanguage()))
-										           .then(() => this._updatePreviousMail())
-										           .then(() => this._updateExternalLanguage())
-										           .then(() => this._close())
-										           .catch(LockedError, e => Dialog.error("operationStillActive_msg"))
-									}
-								})
-							}
-						})
-						.catch(RecipientNotResolvedError, e => {
-							return Dialog.error("tooManyAttempts_msg")
-						})
-						.catch(RecipientsNotFoundError, e => {
-							let invalidRecipients = e.message.join("\n")
-							return Dialog.error(() => lang.get("invalidRecipients_msg") + "\n" + invalidRecipients)
-						})
-						.catch(TooManyRequestsError, e => Dialog.error(tooManyRequestsError))
-						.catch(AccessBlockedError, e => {
-							// special case: the approval status is set to SpamSender, but the update has not been received yet, so use SpamSender as default
-							return checkApprovalStatus(true, "4")
-								.then(() => {
-									console.log("could not send mail (blocked access)", e)
-								})
-						})
-						.catch(FileNotFoundError, () => Dialog.error("couldNotAttachFile_msg"))
-						.catch(PreconditionFailedError, () => Dialog.error("operationStillActive_msg"))
-
+					if (this._model.isConfidential()
+						&& this._model._allRecipients().filter(isExternal).reduce((min, current) =>
+							Math.min(min, this._model.getPasswordStrength(current)), 100) < 80) {
+						return Dialog.confirm("presharedPasswordNotStrongEnough_msg")
+					}
+					return true
+				} else {
+					return false
+				}
+			})
+			.then(confirmed => {
+				if (confirmed) {
+					const promise = this._model.send(this._getBody(), MailMethod.NONE)
 					return showProgress
-						? showProgressDialog(this._confidentialButtonState ? "sending_msg" : "sendingUnencrypted_msg", send)
-						: send
+						? showProgressDialog(this._model.isConfidential() ? "sending_msg" : "sendingUnencrypted_msg", promise)
+						: promise
 				}
 			})
 			.catch(UserError, e => Dialog.error(() => e.message))
@@ -955,92 +759,10 @@ export class MailEditor {
 			})
 	}
 
-	_updateExternalLanguage() {
-		let props = logins.getUserController().props
-		if (props.notificationMailLanguage !== this._selectedNotificationLanguage()) {
-			props.notificationMailLanguage = this._selectedNotificationLanguage()
-			update(props).catch(LockedError, noOp)
-		}
-	}
-
-	_updatePreviousMail(): Promise<void> {
-		if (this._previousMail
-		) {
-			if (this._previousMail.replyType === ReplyType.NONE && this.conversationType === ConversationType.REPLY) {
-				this._previousMail.replyType = ReplyType.REPLY
-			} else if (this._previousMail.replyType === ReplyType.NONE
-				&& this.conversationType === ConversationType.FORWARD) {
-				this._previousMail.replyType = ReplyType.FORWARD
-			} else if (this._previousMail.replyType === ReplyType.FORWARD
-				&& this.conversationType === ConversationType.REPLY) {
-				this._previousMail.replyType = ReplyType.REPLY_FORWARD
-			} else if (this._previousMail.replyType === ReplyType.REPLY
-				&& this.conversationType === ConversationType.FORWARD) {
-				this._previousMail.replyType = ReplyType.REPLY_FORWARD
-			} else {
-				return Promise.resolve()
-			}
-			return update(this._previousMail).catch(NotFoundError, e => {
-				// ignore
-			})
-		} else {
-			return Promise.resolve();
-		}
-	}
-
-	_updateContacts(resolvedRecipients: RecipientInfo[]): Promise<any> {
-		return Promise.all(resolvedRecipients.map(r => {
-			const {contact} = r
-			if (contact) {
-				if (!contact._id && (!logins.getUserController().props.noAutomaticContacts
-					|| (isExternal(r) && this._confidentialButtonState))) {
-					if (isExternal(r) && this._confidentialButtonState) {
-						contact.presharedPassword = this.getPasswordField(r).value().trim()
-					}
-					return LazyContactListId.getAsync().then(listId => {
-						return setup(listId, contact)
-					})
-				} else if (contact._id && isExternal(r) && this._confidentialButtonState
-					&& contact.presharedPassword !== this.getPasswordField(r).value().trim()) {
-					contact.presharedPassword = this.getPasswordField(r).value().trim()
-					return update(contact)
-				} else {
-					return Promise.resolve()
-				}
-			} else {
-				return Promise.resolve()
-			}
-		}))
-	}
-
-	_allRecipients(): Array<RecipientInfo> {
-		return this.toRecipients.bubbles.map(b => b.entity)
-		           .concat(this.ccRecipients.bubbles.map(b => b.entity))
-		           .concat(this.bccRecipients.bubbles.map(b => b.entity))
-	}
-
-	/**
-	 * Makes sure the recipient type and contact are resolved.
-	 */
-	_waitForResolvedRecipients(): Promise<RecipientInfo[]> {
-		return Promise.all(this._allRecipients().map(recipientInfo => {
-			return resolveRecipientInfo(locator.mailModel, recipientInfo).then(recipientInfo => {
-				if (recipientInfo.resolveContactPromise) {
-					return recipientInfo.resolveContactPromise.return(recipientInfo)
-				} else {
-					return recipientInfo
-				}
-			})
-		})).catch(TooManyRequestsError, e => {
-			throw new RecipientNotResolvedError()
-		})
-	}
-
 	/**
 	 * @param name If null the name is taken from the contact if a contact is found for the email addrss
 	 */
 	createBubble(name: ?string, mailAddress: string, contact: ?Contact): Bubble<RecipientInfo> {
-		this._mailChanged = true
 		let recipientInfo = createRecipientInfo(mailAddress, name, contact)
 		logins.isInternalUserLoggedIn() && resolveRecipientInfoContact(recipientInfo, locator.contactModel, logins.getUserController().user)
 		let bubbleWrapper = {}
@@ -1099,9 +821,9 @@ export class MailEditor {
 					})
 				}
 			}
-			if (!this._previousMail
-				|| !this._previousMail.restrictions
-				|| this._previousMail.restrictions.participantGroupInfos.length === 0) {
+			if (!this._model._previousMail
+				|| !this._model._previousMail.restrictions
+				|| this._model._previousMail.restrictions.participantGroupInfos.length === 0) {
 				buttonAttrs.push({
 					label: "remove_action",
 					type: ButtonType.Secondary,
@@ -1135,7 +857,6 @@ export class MailEditor {
 	}
 
 	_updateBubble(bubbles: Bubble<RecipientInfo> [], oldBubble: Bubble<RecipientInfo>, contactId: IdTuple) {
-		this._mailChanged = true
 		let emailAddress = oldBubble.entity.mailAddress
 		load(ContactTypeRef, contactId).then(updatedContact => {
 			if (!updatedContact.mailAddresses.find(ma =>
@@ -1145,6 +866,7 @@ export class MailEditor {
 			} else {
 				let newBubble = this.createBubble(`${updatedContact.firstName} ${updatedContact.lastName}`.trim(), emailAddress, updatedContact)
 				replace(bubbles, oldBubble, newBubble)
+				// TODO; grab from contact
 				if (updatedContact.presharedPassword && this._mailAddressToPasswordField.has(emailAddress)) {
 					neverNull(this._mailAddressToPasswordField.get(emailAddress))
 						.value(updatedContact.presharedPassword || "")
@@ -1154,7 +876,6 @@ export class MailEditor {
 	}
 
 	_removeBubble(bubble: Bubble<RecipientInfo>) {
-		this._mailChanged = true
 		let bubbles = [
 			this.toRecipients.bubbles, this.ccRecipients.bubbles, this.bccRecipients.bubbles
 		].find(b => contains(b, bubble))
@@ -1169,10 +890,10 @@ export class MailEditor {
 			items: langs.map(language => {
 				return {name: lang.get(language.textId), value: language.code}
 			}),
-			selectedValue: this._selectedNotificationLanguage,
+			selectedValue: () => this._model._selectedNotificationLanguage,
 			dropdownWidth: 250
 		}
-		return m("", (this._confidentialButtonState && this._containsExternalRecipients())
+		return m("", this._model.isConfidential()
 			? m("", {
 				oncreate: vnode => animations.add(vnode.dom, opacity(0, 1, false)),
 				onbeforeremove: vnode => animations.add(vnode.dom, opacity(1, 0, false))
@@ -1197,9 +918,9 @@ export class MailEditor {
 		this._inlineImageElements.forEach((inlineImage) => {
 			if (this._domElement && !this._domElement.contains(inlineImage)) {
 				const cid = inlineImage.getAttribute("cid")
-				const attachmentIndex = this._attachments.findIndex((a) => a.cid === cid)
+				const attachmentIndex = this._model._attachments.findIndex((a) => a.cid === cid)
 				if (attachmentIndex !== -1) {
-					this._attachments.splice(attachmentIndex, 1)
+					this._model._attachments.splice(attachmentIndex, 1)
 					elementsToRemove.push(inlineImage)
 					m.redraw()
 				}
