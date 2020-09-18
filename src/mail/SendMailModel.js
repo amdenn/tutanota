@@ -35,7 +35,7 @@ import type {Mail} from "../api/entities/tutanota/Mail"
 import {MailTypeRef} from "../api/entities/tutanota/Mail"
 import type {Contact} from "../api/entities/tutanota/Contact"
 import {ContactTypeRef} from "../api/entities/tutanota/Contact"
-import {isSameId, stringToCustomId} from "../api/common/EntityFunctions"
+import {stringToCustomId} from "../api/common/EntityFunctions"
 import {FileNotFoundError} from "../api/common/error/FileNotFoundError"
 import type {LoginController} from "../api/main/LoginController"
 import type {MailAddress} from "../api/entities/tutanota/MailAddress"
@@ -50,12 +50,13 @@ import type {InlineImages} from "./MailViewer"
 import {isMailAddress} from "../misc/FormatValidator"
 import {createApprovalMail} from "../api/entities/monitor/ApprovalMail"
 import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
-import {remove} from "../api/common/utils/ArrayUtils"
+import {mapAndFilterNull, remove} from "../api/common/utils/ArrayUtils"
 import type {ContactModel} from "../contacts/ContactModel"
 import type {Language} from "../misc/LanguageViewModel"
 import {getAvailableLanguageCode, lang} from "../misc/LanguageViewModel"
 import {RecipientsNotFoundError} from "../api/common/error/RecipientsNotFoundError"
 import {checkApprovalStatus} from "../misc/LoginUtils"
+import {easyMatch} from "../api/common/utils/StringUtils"
 
 assertMainOrNode()
 
@@ -660,21 +661,40 @@ export class SendMailModel {
 
 	_handleEntityEvent(update: EntityUpdateData): void {
 		const {operation, instanceId, instanceListId} = update
-		if (isUpdateForTypeRef(ContactTypeRef, update)
-			&& (operation === OperationType.UPDATE || operation === OperationType.DELETE)) {
-			let contactId: IdTuple = [neverNull(instanceListId), instanceId]
+		let contactId: IdTuple = [neverNull(instanceListId), instanceId]
 
-			this._allRecipients().find(recipient => {
-				if (recipient.contact && recipient.contact._id && isSameId(recipient.contact._id, contactId)) {
-					if (operation === OperationType.UPDATE) {
-						// TODO
-						// this._updateBubble(bubble)
-					} else {
-						// TODO
-						// this._removeBubble(bubble)
+		if (isUpdateForTypeRef(ContactTypeRef, update) && this._allRecipients.find((r) => r.contactId === contactId)) {
+			if (operation === OperationType.UPDATE) {
+				// TODO match address based on ID rather than value and then we can keep a recipient when the address was edited rather than losing them
+				load(ContactTypeRef, contactId).then((contact) => {
+						const mapFun = (recipient) =>
+							// keep a recipient when
+							// 1. the recipient has no contact linked yet
+							// 2. the recipient has a different contact linked
+							// 3. the recipient's linked contact has a matching mailAddress
+							!recipient.contact || recipient.contact._id !== contactId
+								? recipient
+								: recipient.contact.addresses
+								           .find((addr) => easyMatch(addr.address, recipient.mailAddress))
+								? {
+									type: recipient.type,
+									name: `${contact.firstName} ${contact.lastName}`,
+									mailAddress: recipient.mailAddress,
+									contact,
+									resolveContactPromise: recipient.resolveContactPromise
+								}
+								: null
+						this._toRecipients = mapAndFilterNull(this._toRecipients, mapFun)
+						this._ccRecipients = mapAndFilterNull(this._ccRecipients, mapFun)
+						this._bccRecipients = mapAndFilterNull(this._bccRecipients, mapFun)
 					}
-				}
-			})
+				)
+			} else if (operation === OperationType.DELETE) {
+				const filterFun = recipient => !recipient.contact || recipient.contact._id !== contactId
+				this._toRecipients = this._toRecipients.filter(r => filterFun)
+				this._ccRecipients = this._ccRecipients.filter(r => filterFun)
+				this._bccRecipients = this._bccRecipients.filter(r => filterFun)
+			}
 		}
 	}
 }
