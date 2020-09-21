@@ -47,6 +47,7 @@ class Header {
 	_shortcuts: Shortcut[];
 	searchBar: ?SearchBar
 	_wsState: WsConnectionState = "terminated"
+	_updateEntityEventProgress: number = 0
 
 	constructor() {
 		this._currentView = null
@@ -56,19 +57,23 @@ class Header {
 			// Do not return undefined if headerView is not present
 			const injectedView = this._currentView && this._currentView.headerView ?
 				this._currentView.headerView() : null
-			return m(".header-nav.overflow-hidden", [this._connectionIndicator()].concat(injectedView || [
-				m(".header-left.pl-l.ml-negative-s.flex-start.items-center.overflow-hidden", {
-					style: styles.isUsingBottomNavigation() ? {'margin-left': px(-15)} : null  // manual margin to align the hamburger icon on mobile devices
-				}, this._getLeftElements()),
-				(styles.isUsingBottomNavigation() ? this._getCenterContent() : null),
-				styles.isUsingBottomNavigation()
-					? m(".header-right.pr-s.flex-end.items-center",
-					this._currentView && this._currentView.headerRightView ? this._currentView.headerRightView() : null)
-					: m(".header-right.pr-l.mr-negative-m.flex-end.items-center", [
-						this._renderDesktopSearchBar(),
-						m(NavBar, this._renderButtons(isNotSignup()))
-					])
-			]))
+			return m(".header-nav.overflow-hidden.flex.items-end", [
+				m(".flex-column.full-width.flex-center",
+					this._connectionIndicator() || this._entityEventProgress())
+			].concat(injectedView
+				|| [
+					m(".header-left.pl-l.ml-negative-s.flex-start.items-center.overflow-hidden", {
+						style: styles.isUsingBottomNavigation() ? {'margin-left': px(-15)} : null  // manual margin to align the hamburger icon on mobile devices
+					}, this._getLeftElements()),
+					(styles.isUsingBottomNavigation() ? this._getCenterContent() : null),
+					styles.isUsingBottomNavigation()
+						? m(".header-right.pr-s.flex-end.items-center",
+						this._currentView && this._currentView.headerRightView ? this._currentView.headerRightView() : null)
+						: m(".header-right.pr-l.mr-negative-m.flex-end.items-center", [
+							this._renderDesktopSearchBar(),
+							m(NavBar, this._renderButtons(isNotSignup()))
+						])
+				]))
 		}
 
 
@@ -80,6 +85,18 @@ class Header {
 				worker.wsConnection().map(state => {
 					this._wsState = state
 					m.redraw()
+				})
+				worker.updateEntityEventProgress().map(state => {
+					if (this._updateEntityEventProgress !== state) {
+						this._updateEntityEventProgress = state
+						m.redraw()
+						if (this._updateEntityEventProgress === 100) {
+							setTimeout(() => {
+								this._updateEntityEventProgress = 0
+								m.redraw()
+							}, 500)
+						}
+					}
 				})
 				worker.initialized.then(() => {
 					asyncImport(typeof module !== "undefined" ?
@@ -282,7 +299,21 @@ class Header {
 		if (this._wsState === "connected" || this._wsState === "terminated") {
 			return null
 		} else {
-			return m(".indefinite-progress")
+			return [
+				m(".small.center.content-accent-fg", "Connecting..."),
+				m(".indefinite-progress")
+			]
+		}
+	}
+
+	_entityEventProgress(): Children {
+		if (this._updateEntityEventProgress !== 0) {
+			return [
+				m(".small.center.content-accent-fg", "Syncing..."),
+				m(".accent-bg", {style: {width: this._updateEntityEventProgress + '%', height: '3px'}})
+			]
+		} else {
+			return null
 		}
 	}
 

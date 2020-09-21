@@ -9,6 +9,7 @@ import {colors} from "../gui/AlternateColors"
 import type {MailFolderTypeEnum} from "../api/common/TutanotaConstants"
 import {CounterType_UnreadMails, getMailFolderType, MailFolderType, ReplyType} from "../api/common/TutanotaConstants"
 import {MailView} from "./MailView"
+import type {Mail} from "../api/entities/tutanota/Mail"
 import {MailTypeRef} from "../api/entities/tutanota/Mail"
 import {assertMainOrNode} from "../api/Env"
 import {
@@ -34,7 +35,6 @@ import {MonitorService} from "../api/entities/monitor/Services"
 import {createWriteCounterData} from "../api/entities/monitor/WriteCounterData"
 import {debounce} from "../api/common/utils/Utils"
 import {worker} from "../api/main/WorkerClient"
-import type {Mail} from "../api/entities/tutanota/Mail"
 import {locator} from "../api/main/MainLocator"
 
 assertMainOrNode()
@@ -97,11 +97,11 @@ export class MailListView implements Component {
 					} else if (this.targetInbox()) {
 						this.list.selectNone()
 						return locator.mailModel.getMailboxFolders(listElement)
-						                .then((folders) => locator.mailModel.moveMails([listElement], getInboxFolder(folders)))
+						              .then((folders) => locator.mailModel.moveMails([listElement], getInboxFolder(folders)))
 					} else {
 						this.list.selectNone()
 						return locator.mailModel.getMailboxFolders(listElement)
-						                .then((folders) => locator.mailModel.moveMails([listElement], getArchiveFolder(folders)))
+						              .then((folders) => locator.mailModel.moveMails([listElement], getArchiveFolder(folders)))
 					}
 				},
 				enabled: true
@@ -173,8 +173,8 @@ export class MailListView implements Component {
 					m(".small.flex-grow.pt", lang.get("storageDeletion_msg")),
 					m(".mr-negative-s.align-self-end", m(ButtonN, purgeButtonAttrs))
 				]),
-				m(".rel.flex-grow", m(this.list))
-			])
+			m(".rel.flex-grow", m(this.list))
+		])
 			: m(this.list)
 	}
 
