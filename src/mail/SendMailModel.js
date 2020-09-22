@@ -38,6 +38,7 @@ import {ContactTypeRef} from "../api/entities/tutanota/Contact"
 import {stringToCustomId} from "../api/common/EntityFunctions"
 import {FileNotFoundError} from "../api/common/error/FileNotFoundError"
 import type {LoginController} from "../api/main/LoginController"
+import {logins} from "../api/main/LoginController"
 import type {MailAddress} from "../api/entities/tutanota/MailAddress"
 import type {MailboxDetail} from "./MailModel"
 import {MailModel} from "./MailModel"
@@ -57,6 +58,8 @@ import {getAvailableLanguageCode, lang, languages} from "../misc/LanguageViewMod
 import {RecipientsNotFoundError} from "../api/common/error/RecipientsNotFoundError"
 import {checkApprovalStatus} from "../misc/LoginUtils"
 import {easyMatch} from "../api/common/utils/StringUtils"
+import type {IUserController} from "../api/main/UserController"
+import {locator} from "../api/main/MainLocator"
 
 assertMainOrNode()
 
@@ -69,13 +72,20 @@ export function toRecipient({address, name}: MailAddress): Recipient {
 	return {name, address}
 }
 
-type EditorAttachment = TutanotaFile | DataFile | FileReference
+export type Attachment = TutanotaFile | DataFile | FileReference
 type RecipientField = "to" | "cc" | "bcc"
+
+export function defaultSendMailModel(mailboxDetails: MailboxDetail): SendMailModel {
+	return new SendMailModel(logins, locator.mailModel, locator.contactModel, locator.eventController, mailboxDetails)
+}
 
 /**
  * Model which allows sending mails interactively - including resolving of recipients and handling of drafts.
  */
 export class SendMailModel {
+
+	subject: Stream<string>;// we're setting subject to the value of the subject TextField in the MailEditorN
+	initBody: string;
 	draft: ?Mail;
 	recipientsChanged: Stream<void>;
 	_logins: LoginController;
@@ -88,13 +98,11 @@ export class SendMailModel {
 	_ccRecipients: Array<RecipientInfo>;
 	_bccRecipients: Array<RecipientInfo>;
 	_replyTos: Array<RecipientInfo>;
-	subject: Stream<string>;
-	_body: string; // only defined till the editor is initialized
 	_conversationType: ConversationTypeEnum;
 	_previousMessageId: ?Id; // only needs to be the correct value if this is a new email. if we are editing a draft, conversationType is not used
 	_isConfidential: boolean;
 
-	_attachments: Array<EditorAttachment>; // contains either Files from Tutanota or DataFiles of locally loaded files. these map 1:1 to the _attachmentButtons
+	_attachments: Array<Attachment>; // contains either Files from Tutanota or DataFiles of locally loaded files. these map 1:1 to the _attachmentButtons
 	_mailChanged: boolean;
 	_previousMail: ?Mail;
 	_entityEventReceived: EntityEventsListener;
@@ -112,6 +120,8 @@ export class SendMailModel {
 	 */
 	constructor(logins: LoginController, mailModel: MailModel, contactModel: ContactModel, eventController: EventController,
 	            mailboxDetails: MailboxDetail) {
+		this.subject = stream("")
+		this.initBody = ""
 		this._logins = logins
 		this._mailModel = mailModel
 		this._contactModel = contactModel
@@ -154,7 +164,6 @@ export class SendMailModel {
 		// 	})
 
 		this._isConfidential = !props.defaultUnconfidential
-		this.subject = stream("")
 
 		// TODO detect changes
 		this.subject.map(() => this._mailChanged = true)
@@ -162,6 +171,30 @@ export class SendMailModel {
 		this._mailChanged = false
 
 		this._mailAddressToPassword = new Map()
+	}
+
+	logins(): LoginController {
+		return this._logins
+	}
+
+	user(): IUserController {
+		return this.logins().getUserController()
+	}
+
+	contacts(): ContactModel {
+		return this._contactModel
+	}
+
+	mails(): MailModel {
+		return this._mailModel
+	}
+
+	events(): EventController {
+		return this._eventController
+	}
+
+	getPreviousMail(): ?Mail {
+		return this._previousMail
 	}
 
 	getMailboxDetails(): MailboxDetail {
@@ -258,7 +291,7 @@ export class SendMailModel {
 		addSignature: boolean,
 		inlineImages?: ?Promise<InlineImages>,
 		blockExternalContent: boolean
-	}): Promise<void> {
+	}): Promise<SendMailModel> {
 		this._blockExternalContent = blockExternalContent
 		if (addSignature) {
 			bodyText = "<br/><br/><br/>" + bodyText
@@ -281,13 +314,13 @@ export class SendMailModel {
 			})
 	}
 
-	initWithTemplate(recipients: Recipients, subject: string, bodyText: string, confidential: ?boolean, senderMailAddress?: string): Promise<void> {
+	initWithTemplate(recipients: Recipients, subject: string, bodyText: string, confidential: ?boolean, senderMailAddress?: string): Promise<SendMailModel> {
 		const sender = senderMailAddress ? senderMailAddress : this._senderAddress
 
 		return this._setMailData(null, confidential, ConversationType.NEW, null, sender, recipients, [], subject, bodyText, [])
 	}
 
-	initWithMailtoUrl(mailtoUrl: string, confidential: boolean): Promise<void> {
+	initWithMailtoUrl(mailtoUrl: string, confidential: boolean): Promise<SendMailModel> {
 
 
 		const {to, cc, bcc, subject, body} = parseMailtoUrl(mailtoUrl)
@@ -309,7 +342,7 @@ export class SendMailModel {
 		bodyText: string,
 		blockExternalContent: boolean,
 		inlineImages?: Promise<InlineImages>
-	}): Promise<void> {
+	}): Promise<SendMailModel> {
 		let conversationType: ConversationTypeEnum = ConversationType.NEW
 		let previousMessageId: ?string = null
 		let previousMail: ?Mail = null
@@ -345,7 +378,7 @@ export class SendMailModel {
 
 	_setMailData(previousMail: ?Mail, confidential: ?boolean, conversationType: ConversationTypeEnum, previousMessageId: ?string,
 	             senderMailAddress: string, recipients: Recipients, attachments: $ReadOnlyArray<TutanotaFile>, subject: string,
-	             body: string, replyTos: EncryptedMailAddress[]): Promise<void> {
+	             body: string, replyTos: EncryptedMailAddress[]): Promise<SendMailModel> {
 		this._previousMail = previousMail
 		this._conversationType = conversationType
 		this._previousMessageId = previousMessageId
@@ -374,8 +407,9 @@ export class SendMailModel {
 			}
 			return ri
 		})
+		this.initBody = body
 		this._mailChanged = false
-		return Promise.resolve()
+		return Promise.resolve(this)
 	}
 
 	_createRecipientInfo(name: ?string, address: string, contact: ?Contact, resolveLazily: boolean): RecipientInfo {
@@ -388,6 +422,22 @@ export class SendMailModel {
 			resolveRecipientInfo(this._mailModel, ri).then(() => this.recipientsChanged(undefined))
 		}
 		return ri
+	}
+
+	toRecipients(): Array<RecipientInfo> {
+		return this._toRecipients
+	}
+
+	ccRecipients(): Array<RecipientInfo> {
+		return this._ccRecipients
+	}
+
+	bccRecipients(): Array<RecipientInfo> {
+		return this._bccRecipients
+	}
+
+	attachments(): Array<Attachment> {
+		return this._attachments
 	}
 
 	addRecipient(type: RecipientField, recipient: Recipient, resolveLazily: boolean = false): RecipientInfo {
@@ -428,7 +478,7 @@ export class SendMailModel {
 	}
 
 	/** @throws UserError in case files are too big to add */
-	attachFiles(files: $ReadOnlyArray<EditorAttachment>,): void {
+	attachFiles(files: $ReadOnlyArray<Attachment>,): void {
 		let totalSize = 0
 		this._attachments.forEach(file => {
 			totalSize += Number(file.size)
@@ -448,7 +498,7 @@ export class SendMailModel {
 		this._mailChanged = true
 	}
 
-	removeAttachment(file: EditorAttachment): void {
+	removeAttachment(file: Attachment): void {
 		remove(this._attachments, file)
 
 		this._mailChanged = true
@@ -481,7 +531,7 @@ export class SendMailModel {
 		return getSenderNameForUser(this._mailboxDetails, this._logins.getUserController())
 	}
 
-	_updateDraft(body: string, attachments: ?$ReadOnlyArray<EditorAttachment>, draft: Mail) {
+	_updateDraft(body: string, attachments: ?$ReadOnlyArray<Attachment>, draft: Mail) {
 		return worker
 			.updateMailDraft(this.subject(), body, this._senderAddress, this.getSenderName(), this._toRecipients,
 				this._ccRecipients, this._bccRecipients, attachments, this.isConfidential(), draft)
@@ -495,7 +545,7 @@ export class SendMailModel {
 			})
 	}
 
-	_createDraft(body: string, attachments: ?$ReadOnlyArray<EditorAttachment>, mailMethod: MailMethodEnum): Promise<Mail> {
+	_createDraft(body: string, attachments: ?$ReadOnlyArray<Attachment>, mailMethod: MailMethodEnum): Promise<Mail> {
 		return worker.createMailDraft(this.subject(), body,
 			this._senderAddress, this.getSenderName(), this._toRecipients, this._ccRecipients, this._bccRecipients, this._conversationType,
 			this._previousMessageId, attachments, this.isConfidential(), this._replyTos, mailMethod)
@@ -695,7 +745,7 @@ export class SendMailModel {
 		const {operation, instanceId, instanceListId} = update
 		let contactId: IdTuple = [neverNull(instanceListId), instanceId]
 
-		if (isUpdateForTypeRef(ContactTypeRef, update) && this.allRecipients.find((r) => r.contactId === contactId)) {
+		if (isUpdateForTypeRef(ContactTypeRef, update) && this.allRecipients().find((r) => r.contact && r.contact._id === contactId)) {
 			if (operation === OperationType.UPDATE) {
 				// TODO match address based on ID rather than value and then we can keep a recipient when the address was edited rather than losing them
 				load(ContactTypeRef, contactId).then((contact) => {
@@ -727,7 +777,7 @@ export class SendMailModel {
 				this._ccRecipients = this._ccRecipients.filter(r => filterFun)
 				this._bccRecipients = this._bccRecipients.filter(r => filterFun)
 			}
+			this.setMailChanged(true)
 		}
 	}
-
 }

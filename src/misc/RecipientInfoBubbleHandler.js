@@ -14,15 +14,15 @@ import {ContactSuggestion, ContactSuggestionHeight} from "./ContactSuggestion"
 import type {RecipientInfo} from "../api/common/RecipientInfo"
 
 
-type BubbleFactory = {
+export interface RecipientInfoBubbleFactory {
 	createBubble(name: ?string, mailAddress: string, contact: ?Contact): Bubble<RecipientInfo>
 }
 
-export class MailAddressBubbleHandler implements BubbleHandler<RecipientInfo, ContactSuggestion> {
+export class RecipientInfoBubbleHandler implements BubbleHandler<RecipientInfo, ContactSuggestion> {
 	suggestionHeight: number;
-	_bubbleFactory: BubbleFactory;
+	_bubbleFactory: RecipientInfoBubbleFactory;
 
-	constructor(bubbleFactory: BubbleFactory) {
+	constructor(bubbleFactory: RecipientInfoBubbleFactory) {
 		this._bubbleFactory = bubbleFactory
 		this.suggestionHeight = ContactSuggestionHeight
 	}

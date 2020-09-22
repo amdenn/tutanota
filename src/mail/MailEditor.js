@@ -100,7 +100,7 @@ import {showUpgradeWizard} from "../subscription/UpgradeSubscriptionWizard"
 import {CustomerPropertiesTypeRef} from "../api/entities/sys/CustomerProperties"
 import type {InlineImages} from "./MailViewer"
 import {getTimeZone} from "../calendar/CalendarUtils"
-import {MailAddressBubbleHandler} from "../misc/MailAddressBubbleHandler"
+import {RecipientInfoBubbleHandler} from "../misc/RecipientInfoBubbleHandler"
 import {createApprovalMail} from "../api/entities/monitor/ApprovalMail"
 import {newMouseEvent} from "../gui/HtmlUtils"
 import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
@@ -154,9 +154,9 @@ export class MailEditor {
 	 */
 	constructor(mailboxDetails: MailboxDetail) {
 		this.conversationType = ConversationType.NEW
-		this.toRecipients = new BubbleTextField("to_label", new MailAddressBubbleHandler(this))
-		this.ccRecipients = new BubbleTextField("cc_label", new MailAddressBubbleHandler(this))
-		this.bccRecipients = new BubbleTextField("bcc_label", new MailAddressBubbleHandler(this))
+		this.toRecipients = new BubbleTextField("to_label", new RecipientInfoBubbleHandler(this))
+		this.ccRecipients = new BubbleTextField("cc_label", new RecipientInfoBubbleHandler(this))
+		this.bccRecipients = new BubbleTextField("bcc_label", new RecipientInfoBubbleHandler(this))
 		this._replyTos = []
 		this._mailAddressToPasswordField = new Map()
 		this._attachments = []
@@ -261,6 +261,7 @@ export class MailEditor {
 		const attachImageHandler = isApp() ?
 			null
 			: (ev) => this._onAttachImageClicked(ev)
+
 		this._richTextToolbar = new RichTextToolbar(this._editor, {imageButtonClickHandler: attachImageHandler})
 		if (logins.isInternalUserLoggedIn()) {
 			this.toRecipients.textField._injectionsRight = () => m(ExpanderButtonN, {

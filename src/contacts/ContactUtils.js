@@ -11,6 +11,7 @@ import {LazyLoaded} from "../api/common/utils/LazyLoaded"
 import type {ContactList} from "../api/entities/tutanota/ContactList"
 import {ContactListTypeRef} from "../api/entities/tutanota/ContactList"
 import {NotAuthorizedError, NotFoundError} from "../api/common/error/RestError"
+import type {LoginController} from "../api/main/LoginController"
 import {logins} from "../api/main/LoginController"
 import {asyncFindAndMap, neverNull} from "../api/common/utils/Utils"
 import {worker} from "../api/main/WorkerClient"
@@ -23,19 +24,24 @@ import {isoDateToBirthday} from "../api/common/utils/BirthdayUtils"
 
 assertMainOrNode()
 
-export const LazyContactListId: LazyLoaded<Id> = new LazyLoaded(() => {
-	return loadRoot(ContactListTypeRef, logins.getUserController().user.userGroup.group)
-		.then((contactList: ContactList) => {
-			return contactList.contacts
-		})
-		.catch(NotFoundError, e => {
-			if (!logins.getUserController().isInternalUser()) {
-				return null // external users have no contact list.
-			} else {
-				throw e
-			}
-		})
-})
+export function lazyContactListId(logins: LoginController): LazyLoaded<Id> {
+	return new LazyLoaded(() => {
+		return loadRoot(ContactListTypeRef, logins.getUserController().user.userGroup.group)
+			.then((contactList: ContactList) => {
+				return contactList.contacts
+			})
+			.catch(NotFoundError, e => {
+				if (!logins.getUserController().isInternalUser()) {
+					return null // external users have no contact list.
+				} else {
+					throw e
+				}
+			})
+	})
+}
+
+// convenience so we don't have to update every call site with lazyContactListId
+export const LazyContactListId: LazyLoaded<Id> = lazyContactListId(logins)
 
 export const ContactMailAddressTypeToLabel: {[key: ContactAddressTypeEnum]: TranslationKey} = {
 	[ContactAddressType.PRIVATE]: "private_label",
@@ -164,7 +170,6 @@ export function searchForContacts(query: string, field: string, minSuggestionCou
 		             }).filter(contact => contact != null)
 	             })
 }
-
 
 
 /**
