@@ -829,7 +829,7 @@ export class CalendarEventViewModel {
 	}
 
 	_allRecipients(): Array<RecipientInfo> {
-		return this._inviteModel._allRecipients().concat(this._updateModel._allRecipients()).concat(this._cancelModel._allRecipients())
+		return this._inviteModel.allRecipients().concat(this._updateModel.allRecipients()).concat(this._cancelModel.allRecipients())
 	}
 
 	dispose(): void {

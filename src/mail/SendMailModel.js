@@ -52,8 +52,8 @@ import {createApprovalMail} from "../api/entities/monitor/ApprovalMail"
 import type {EncryptedMailAddress} from "../api/entities/tutanota/EncryptedMailAddress"
 import {mapAndFilterNull, remove} from "../api/common/utils/ArrayUtils"
 import type {ContactModel} from "../contacts/ContactModel"
-import type {Language} from "../misc/LanguageViewModel"
-import {getAvailableLanguageCode, lang} from "../misc/LanguageViewModel"
+import type {Language, TranslationKey} from "../misc/LanguageViewModel"
+import {getAvailableLanguageCode, lang, languages} from "../misc/LanguageViewModel"
 import {RecipientsNotFoundError} from "../api/common/error/RecipientsNotFoundError"
 import {checkApprovalStatus} from "../misc/LoginUtils"
 import {easyMatch} from "../api/common/utils/StringUtils"
@@ -88,25 +88,22 @@ export class SendMailModel {
 	_ccRecipients: Array<RecipientInfo>;
 	_bccRecipients: Array<RecipientInfo>;
 	_replyTos: Array<RecipientInfo>;
-	_subject: Stream<string>;
+	subject: Stream<string>;
 	_body: string; // only defined till the editor is initialized
 	_conversationType: ConversationTypeEnum;
 	_previousMessageId: ?Id; // only needs to be the correct value if this is a new email. if we are editing a draft, conversationType is not used
-	_confidentialButtonState: boolean;
+	_isConfidential: boolean;
 
 	_attachments: Array<EditorAttachment>; // contains either Files from Tutanota or DataFiles of locally loaded files. these map 1:1 to the _attachmentButtons
 	_mailChanged: boolean;
 	_previousMail: ?Mail;
 	_entityEventReceived: EntityEventsListener;
-	_entityEventViewHandler: ?EntityEventsListener; //TODO remove this once MailEditor is fully stateless (BUbbleTextField is rewritten etc)
 	_mailboxDetails: MailboxDetail;
 
-	_objectURLs: Array<string>;
 	_blockExternalContent: boolean;
-	_mentionedInlineImages: Array<string>
-	// TODO handle inline images when using SendMailModel for MailEditor
-	/** HTML elements which correspond to inline images. We need them to check that they are removed/remove them later */
-	_inlineImageElements: Array<HTMLElement>;
+
+	_mailAddressToPassword: Map<string, string>
+
 
 	/**
 	 * Creates a new draft message. Invoke initAsResponse or initFromDraft if this message should be a response
@@ -129,32 +126,26 @@ export class SendMailModel {
 		this._previousMail = null
 		this.draft = null
 		this._mailboxDetails = mailboxDetails
-		this._objectURLs = []
 		this._blockExternalContent = true
-		this._mentionedInlineImages = []
-		this._inlineImageElements = []
 		this.recipientsChanged = stream(undefined)
 
 		let props = this._logins.getUserController().props
 
-		this._senderAddress = getDefaultSender(logins, this._mailboxDetails)
+		this._senderAddress = getDefaultSender(this._logins, this._mailboxDetails)
 
 		this._entityEventReceived = (updates) => {
 			for (let update of updates) {
 				this._handleEntityEvent(update)
 			}
 		}
-		this._entityEventViewHandler = null
-
 		this._eventController.addEntityListener(this._entityEventReceived)
 
 		// TODO allow selecting notification language when changing MailEditor
-		// let sortedLanguages = languages.slice().sort((a, b) => lang.get(a.textId).localeCompare(lang.get(b.textId)))
+		let sortedLanguages = languages.slice().sort((a, b) => lang.get(a.textId).localeCompare(lang.get(b.textId)))
 		this._selectedNotificationLanguage = getAvailableLanguageCode(props.notificationMailLanguage || lang.code)
 
 		// getTemplateLanguages(this._logins, sortedLanguages)
 		// 	.then((filteredLanguages) => {
-		// 		if (filteredLanguages.length > 0) {
 		// 			const languageCodes = filteredLanguages.map(l => l.code)
 		// 			this._selectedNotificationLanguage = _getSubstitutedLanguageCode(props.notificationMailLanguage
 		// 				|| lang.code, languageCodes) || languageCodes[0]
@@ -162,22 +153,60 @@ export class SendMailModel {
 		// 		}
 		// 	})
 
-		this._confidentialButtonState = !props.defaultUnconfidential
-		this._subject = stream("")
+		this._isConfidential = !props.defaultUnconfidential
+		this.subject = stream("")
 
 		// TODO detect changes
-		this._subject.map(() => this._mailChanged = true)
+		this.subject.map(() => this._mailChanged = true)
 
 		this._mailChanged = false
+
+		this._mailAddressToPassword = new Map()
+	}
+
+	getMailboxDetails(): MailboxDetail {
+		return this._mailboxDetails
+	}
+
+	getConversationTypeTranslationKey(): TranslationKey {
+		switch (this._conversationType) {
+			case ConversationType.NEW:
+				return "newMail_action"
+			case ConversationType.REPLY:
+				return "reply_action"
+			case ConversationType.FORWARD:
+				return "forward_action"
+			default:
+				return "emptyString_msg"
+		}
+	}
+
+	getRecipientsPassword(address: string): string {
+		return this._mailAddressToPassword.get(address) || ""
+	}
+
+	setRecipientsPassword(address: string, password: string) {
+		this._mailAddressToPassword.set(address, password)
+	}
+
+	getConfidentialStateTranslationKey(): TranslationKey {
+		return this._isConfidential
+			? 'confidentialStatus_msg'
+			: 'nonConfidentialStatus_msg'
 	}
 
 	getNotificationLanguages(): Array<Language> {
-		// TODO
-		return []
+		return languages.slice().sort((a, b) => lang.get(a.textId).localeCompare(lang.get(b.textId)))
+	}
+
+	getSubject(): Stream<string> {
+		return this.subject
 	}
 
 	setSubject(subject: string) {
-		this._subject(subject)
+		this._mailChanged = subject !== this.subject()
+		this.subject(subject)
+
 	}
 
 	selectSender(senderAddress: string) {
@@ -208,6 +237,10 @@ export class SendMailModel {
 
 	setMailChanged(hasChanged: boolean) {
 		this._mailChanged = hasChanged
+	}
+
+	doBlockExternalContent(): boolean {
+		return this._blockExternalContent
 	}
 
 	initAsResponse({
@@ -270,7 +303,7 @@ export class SendMailModel {
 		return this._setMailData(null, confidential, ConversationType.NEW, null, this._senderAddress, recipients, [], subject, bodyText, [])
 	}
 
-	initFromDraft({draftMail, attachments, bodyText, inlineImages, blockExternalContent}: {
+	initFromDraft({draftMail, attachments, bodyText, blockExternalContent}: {
 		draftMail: Mail,
 		attachments: TutanotaFile[],
 		bodyText: string,
@@ -317,10 +350,10 @@ export class SendMailModel {
 		this._conversationType = conversationType
 		this._previousMessageId = previousMessageId
 		if (confidential != null) {
-			this._confidentialButtonState = confidential
+			this._isConfidential = confidential
 		}
 		this._senderAddress = senderMailAddress
-		this._subject(subject)
+		this.subject(subject)
 		this._attachments = []
 
 		this.attachFiles(attachments)
@@ -395,7 +428,7 @@ export class SendMailModel {
 	}
 
 	/** @throws UserError in case files are too big to add */
-	attachFiles(files: $ReadOnlyArray<EditorAttachment>): void {
+	attachFiles(files: $ReadOnlyArray<EditorAttachment>,): void {
 		let totalSize = 0
 		this._attachments.forEach(file => {
 			totalSize += Number(file.size)
@@ -417,10 +450,7 @@ export class SendMailModel {
 
 	removeAttachment(file: EditorAttachment): void {
 		remove(this._attachments, file)
-		if (file.cid) {
-			const imageElement = this._inlineImageElements.find((e) => e.getAttribute("cid") === file.cid)
-			imageElement && imageElement.remove()
-		}
+
 		this._mailChanged = true
 	}
 
@@ -453,7 +483,7 @@ export class SendMailModel {
 
 	_updateDraft(body: string, attachments: ?$ReadOnlyArray<EditorAttachment>, draft: Mail) {
 		return worker
-			.updateMailDraft(this._subject(), body, this._senderAddress, this.getSenderName(), this._toRecipients,
+			.updateMailDraft(this.subject(), body, this._senderAddress, this.getSenderName(), this._toRecipients,
 				this._ccRecipients, this._bccRecipients, attachments, this.isConfidential(), draft)
 			.catch(LockedError, (e) => {
 				console.log("updateDraft: operation is still active", e)
@@ -466,21 +496,21 @@ export class SendMailModel {
 	}
 
 	_createDraft(body: string, attachments: ?$ReadOnlyArray<EditorAttachment>, mailMethod: MailMethodEnum): Promise<Mail> {
-		return worker.createMailDraft(this._subject(), body,
+		return worker.createMailDraft(this.subject(), body,
 			this._senderAddress, this.getSenderName(), this._toRecipients, this._ccRecipients, this._bccRecipients, this._conversationType,
 			this._previousMessageId, attachments, this.isConfidential(), this._replyTos, mailMethod)
 	}
 
 	isConfidential(): boolean {
-		return this._confidentialButtonState || !this._containsExternalRecipients()
+		return this._isConfidential || !this._containsExternalRecipients()
 	}
 
 	setConfidential(confidentialButtonState: boolean): void {
-		this._confidentialButtonState = confidentialButtonState
+		this._isConfidential = confidentialButtonState
 	}
 
 	_containsExternalRecipients(): boolean {
-		return (this._allRecipients().find(r => isExternal(r)) != null)
+		return (this.allRecipients().find(r => isExternal(r)) != null)
 	}
 
 	/**
@@ -518,7 +548,7 @@ export class SendMailModel {
 							return this._sendApprovalMail(body)
 						} else {
 							let externalRecipients = resolvedRecipients.filter(r => isExternal(r))
-							if (this._confidentialButtonState && externalRecipients.length > 0
+							if (this._isConfidential && externalRecipients.length > 0
 								&& externalRecipients.some(r => r.contact
 									&& (r.contact.presharedPassword == null || r.contact.presharedPassword.trim() === ""))) {
 								throw new UserError("noPreSharedPassword_msg")
@@ -565,7 +595,7 @@ export class SendMailModel {
 		const m = createApprovalMail({
 			_id: [listId, stringToCustomId(this._senderAddress)],
 			_ownerGroup: this._logins.getUserController().user.userGroup.group,
-			text: `Subject: ${this._subject()}<br>${body}`,
+			text: `Subject: ${this.subject()}<br>${body}`,
 		})
 		return setup(listId, m)
 			.catch(NotAuthorizedError, e => console.log("not authorized for approval message"))
@@ -608,9 +638,9 @@ export class SendMailModel {
 			const {contact} = r
 			if (contact) {
 				if (!contact._id
-					&& (!this._logins.getUserController().props.noAutomaticContacts || (isExternal(r) && this._confidentialButtonState))
+					&& (!this._logins.getUserController().props.noAutomaticContacts || (isExternal(r) && this._isConfidential))
 				) {
-					if (isExternal(r) && this._confidentialButtonState) {
+					if (isExternal(r) && this._isConfidential) {
 						contact.presharedPassword = this._getPassword(r).trim()
 					}
 					return LazyContactListId.getAsync().then(listId => {
@@ -618,7 +648,7 @@ export class SendMailModel {
 					})
 				} else if (contact._id
 					&& isExternal(r)
-					&& this._confidentialButtonState
+					&& this._isConfidential
 					&& contact.presharedPassword !== this._getPassword(r).trim()
 				) {
 					contact.presharedPassword = this._getPassword(r).trim()
@@ -636,7 +666,7 @@ export class SendMailModel {
 		return r.contact && r.contact.presharedPassword || ""
 	}
 
-	_allRecipients(): Array<RecipientInfo> {
+	allRecipients(): Array<RecipientInfo> {
 		return this._toRecipients
 		           .concat(this._ccRecipients)
 		           .concat(this._bccRecipients)
@@ -646,7 +676,7 @@ export class SendMailModel {
 	 * Makes sure the recipient type and contact are resolved.
 	 */
 	_waitForResolvedRecipients(): Promise<RecipientInfo[]> {
-		return Promise.all(this._allRecipients().map(recipientInfo => {
+		return Promise.all(this.allRecipients().map(recipientInfo => {
 			return resolveRecipientInfo(this._mailModel, recipientInfo).then(recipientInfo => {
 				if (recipientInfo.resolveContactPromise) {
 					return recipientInfo.resolveContactPromise.return(recipientInfo)
@@ -661,10 +691,11 @@ export class SendMailModel {
 
 	// TODO Figure out if this will break the CalendarEventViewModel which may or may not expect the recipients not to change
 	_handleEntityEvent(update: EntityUpdateData): void {
+
 		const {operation, instanceId, instanceListId} = update
 		let contactId: IdTuple = [neverNull(instanceListId), instanceId]
 
-		if (isUpdateForTypeRef(ContactTypeRef, update) && this._allRecipients.find((r) => r.contactId === contactId)) {
+		if (isUpdateForTypeRef(ContactTypeRef, update) && this.allRecipients.find((r) => r.contactId === contactId)) {
 			if (operation === OperationType.UPDATE) {
 				// TODO match address based on ID rather than value and then we can keep a recipient when the address was edited rather than losing them
 				load(ContactTypeRef, contactId).then((contact) => {
@@ -698,4 +729,5 @@ export class SendMailModel {
 			}
 		}
 	}
+
 }

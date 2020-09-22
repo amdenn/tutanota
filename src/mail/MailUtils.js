@@ -382,7 +382,7 @@ export function getEnabledMailAddressesWithUser(mailboxDetail: MailboxDetail, us
 }
 
 export function isUserMailbox(mailboxDetails: MailboxDetail) {
-	return mailboxDetails.mailGroup.user != null
+	return mailboxDetails.mailGroup && mailboxDetails.mailGroup.user
 }
 
 
